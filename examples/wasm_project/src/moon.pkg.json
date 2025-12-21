@@ -1,12 +1,10 @@
 {
-  "import": [
-    "mizchi/markdown"
-  ],
   "link": {
-    "js": {
+    "wasm-gc": {
       "exports": [
-        "parse_markdown"
-      ]
+        "add"
+      ],
+      "use-js-builtin-string": true
     }
   }
 }

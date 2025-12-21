@@ -7,12 +7,7 @@
     "allowJs": true,
     "strict": true,
     "esModuleInterop": true,
-    "skipLibCheck": true,
-    "paths": {
-      "mbt:internal/app": [
-        "./target/js/release/build/app.js"
-      ]
-    }
+    "skipLibCheck": true
   },
   "include": [
     "*.ts"

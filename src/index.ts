@@ -17,10 +17,16 @@ export interface MoonBitPluginOptions {
   watch?: boolean;
 
   /**
-   * Build target: "release" or "debug"
+   * Build mode: "release" or "debug"
    * @default "release"
    */
-  target?: "release" | "debug";
+  mode?: "release" | "debug";
+
+  /**
+   * Build target: "js", "wasm", or "wasm-gc"
+   * @default "js"
+   */
+  target?: "js" | "wasm" | "wasm-gc";
 
   /**
    * Whether to show MoonBit build logs
@@ -43,7 +49,8 @@ export default function moonbitPlugin(
   const {
     root = process.cwd(),
     watch: watchOption,
-    target = "release",
+    mode = "release",
+    target = "js",
     showLogs = true,
   } = options;
 
@@ -53,10 +60,9 @@ export default function moonbitPlugin(
   let moduleInfo: ModuleInfo | null = null;
   let logBuffer: string[] = [];
   let errorBuffer: string[] = [];
-  let isBuilding = false;
-  let lastBuildSuccess = false;
 
-  const buildDir = path.join(root, "target", "js", target, "build");
+  const buildDir = path.join(root, "target", target, mode, "build");
+  const fileExt = target === "js" ? ".js" : ".wasm";
 
   function readModuleInfo(): ModuleInfo | null {
     const modPath = path.join(root, "moon.mod.json");
@@ -86,22 +92,16 @@ export default function moonbitPlugin(
     // Handle root package (when pathParts is empty)
     if (pathParts.length === 0) {
       // Root package: use the last part of module name
-      // e.g., "test/app" -> "app.js"
+      // e.g., "test/app" -> "app.js" or "app.wasm"
       const rootModuleName = moduleNameParts[moduleNameParts.length - 1];
-      return path.join(buildDir, `${rootModuleName}.js`);
+      return path.join(buildDir, `${rootModuleName}${fileExt}`);
     }
 
-    // Build the file path: target/js/release/build/path/to/module/module.js
+    // Build the file path: target/{backend}/{mode}/build/path/to/module/module.{ext}
     const moduleName = pathParts[pathParts.length - 1];
-    const modulePath = path.join(buildDir, ...pathParts, `${moduleName}.js`);
+    const modulePath = path.join(buildDir, ...pathParts, `${moduleName}${fileExt}`);
 
     return modulePath;
-  }
-
-  function flushLogBuffer(): string[] {
-    const logs = [...logBuffer];
-    logBuffer = [];
-    return logs;
   }
 
   function clearErrorBuffer() {
@@ -150,10 +150,8 @@ export default function moonbitPlugin(
   function startWatchProcess() {
     if (moonProcess) return;
 
-    log("Starting moon build --watch...");
-    isBuilding = true;
-
-    moonProcess = spawn("moon", ["build", "--target", "js", "--watch"], {
+    log(`Starting moon build --target ${target} --watch...`);
+    moonProcess = spawn("moon", ["build", "--target", target, "--watch"], {
       cwd: root,
       stdio: ["ignore", "pipe", "pipe"],
       shell: true,
@@ -169,7 +167,6 @@ export default function moonbitPlugin(
           // Detect build start (file watching)
           if (line.includes("Watching")) {
             clearErrorBuffer();
-            isBuilding = true;
           }
 
           log(line);
@@ -180,8 +177,6 @@ export default function moonbitPlugin(
             line.includes("Build completed") ||
             line.includes("moon: ran")
           ) {
-            isBuilding = false;
-            lastBuildSuccess = true;
             clearErrorBuffer();
             triggerHMR();
           }
@@ -207,11 +202,6 @@ export default function moonbitPlugin(
           // Print immediately with preserved colors
           process.stderr.write(line + "\n");
 
-          // Detect build errors
-          if (line.includes("error") || line.includes("Error")) {
-            isBuilding = false;
-            lastBuildSuccess = false;
-          }
         });
       }
     });
@@ -219,13 +209,11 @@ export default function moonbitPlugin(
     moonProcess.on("close", (code) => {
       log(`moon build process exited with code ${code}`);
       moonProcess = null;
-      isBuilding = false;
     });
 
     moonProcess.on("error", (err) => {
       log(`Failed to start moon build: ${err.message}`, "error");
       moonProcess = null;
-      isBuilding = false;
     });
   }
 
@@ -276,7 +264,7 @@ export default function moonbitPlugin(
         buildDir,
         { recursive: true },
         (_eventType, filename) => {
-          if (filename?.endsWith(".js")) {
+          if (filename?.endsWith(fileExt)) {
             // Clear errors on successful rebuild
             clearErrorBuffer();
             log(`Detected change: ${filename}`);
@@ -373,8 +361,20 @@ export default function moonbitPlugin(
         const resolved = resolveModulePath(fullId);
 
         if (resolved && fs.existsSync(resolved)) {
-          const content = fs.readFileSync(resolved, "utf-8");
-          return content;
+          if (target === "js") {
+            // JS backend: return the JS file content directly
+            const content = fs.readFileSync(resolved, "utf-8");
+            return content;
+          } else {
+            // WASM backend: generate loader code using Vite's ?init
+            const relativePath = path.relative(root, resolved).replace(/\\/g, "/");
+            return `
+import init from "/${relativePath}?init";
+
+export default init;
+export { init };
+`;
+          }
         }
 
         // Show errors with preserved colors when module loading fails
