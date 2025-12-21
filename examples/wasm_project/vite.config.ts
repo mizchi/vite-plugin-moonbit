@@ -1,6 +1,5 @@
 import { defineConfig } from 'vite';
-// import moonbit from 'vite-plugin-moonbit';
-import moonbit from '../../dist/index.mjs';
+import moonbit from 'vite-plugin-moonbit';
 
 export default defineConfig({
   plugins: [

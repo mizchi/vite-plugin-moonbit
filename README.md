@@ -15,10 +15,27 @@ Vite plugin for MoonBit projects. Supports both JS and WASM-GC backends.
 pnpm add -D vite-plugin-moonbit
 ```
 
+```js
+// vite.config.ts
+import { defineConfig } from 'vite';
+import moonbit from 'vite-plugin-moonbit';
+
+export default defineConfig({
+  plugins: [
+    moonbit({
+      target: "js",
+      // run: `moon build --target js --watch` in vite
+      // If you want to bulid manually, set `false` and `moon build`
+      watch: true
+    })
+  ],
+});
+```
+
 ## Quick Start
 
 ```bash
-npx tiged github:mizchi/vite-plugin-moonbit/example myapp
+npx tiged github:mizchi/vite-plugin-moonbit/examples/js_project myapp
 cd myapp && pnpm install
 moon build && pnpm dev
 ```
@@ -57,7 +74,9 @@ Optional: `tsconfig.json`'s paths
 }
 ```
 
+See [examples/js_project](./examples/js_project)
 
+Check out: `npx tiged mizchi/vite-plugin-moonbit/examples/wasm_project myapp`
 
 ### WASM-GC Backend
 
@@ -79,6 +98,10 @@ const instance = await init();
 const { add } = instance.exports as { add: (a: number, b: number) => number };
 add(1, 2);
 ```
+
+See [examples/wasm_project](./examples/wasm_project)
+
+Check out: `npx tiged mizchi/vite-plugin-moonbit/examples/wasm_project myapp`
 
 ## Options
 
