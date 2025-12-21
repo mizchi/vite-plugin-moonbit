@@ -1,9 +1,11 @@
 {
-  "name": "vite-plugin-moonbit-test",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build"
+  },
+  "devDependencies": {
+    "vite": "8.0.0-beta.3"
   }
 }

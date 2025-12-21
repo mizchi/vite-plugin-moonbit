@@ -1,5 +1,5 @@
 // Test: Import MoonBit module via mbt: prefix
-import { parse_markdown } from 'mbt:test/app';
+import { parse_markdown } from 'mbt:internal/app';
 
 console.log('MoonBit module loaded successfully!');
 console.log('parse_markdown:', parse_markdown);

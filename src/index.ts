@@ -52,6 +52,7 @@ export default function moonbitPlugin(
   let moonProcess: ChildProcess | null = null;
   let moduleInfo: ModuleInfo | null = null;
   let logBuffer: string[] = [];
+  let errorBuffer: string[] = [];
   let isBuilding = false;
   let lastBuildSuccess = false;
 
@@ -103,15 +104,39 @@ export default function moonbitPlugin(
     return logs;
   }
 
+  function clearErrorBuffer() {
+    errorBuffer = [];
+  }
+
+  function printErrorBuffer() {
+    if (errorBuffer.length === 0) return;
+
+    // Clear terminal
+    console.clear();
+
+    // Print header
+    console.log("\n\x1b[1;31m--- MoonBit Build Errors ---\x1b[0m\n");
+
+    // Print errors with preserved ANSI colors
+    errorBuffer.forEach((line) => {
+      process.stderr.write(line + "\n");
+    });
+
+    console.log("\n\x1b[1;31m----------------------------\x1b[0m\n");
+  }
+
   function log(message: string, type: "info" | "warn" | "error" = "info") {
-    const prefix = "[moonbit]";
+    const prefix = "\x1b[36m[moonbit]\x1b[0m";
     const formattedMessage = `${prefix} ${message}`;
     logBuffer.push(formattedMessage);
 
     if (showLogs) {
       switch (type) {
         case "error":
-          console.error(formattedMessage);
+          // Store raw error message with ANSI codes preserved
+          errorBuffer.push(message);
+          // Also print immediately
+          process.stderr.write(formattedMessage + "\n");
           break;
         case "warn":
           console.warn(formattedMessage);
@@ -132,12 +157,21 @@ export default function moonbitPlugin(
       cwd: root,
       stdio: ["ignore", "pipe", "pipe"],
       shell: true,
+      env: { ...process.env, FORCE_COLOR: "1" }, // Force ANSI colors
     });
 
     moonProcess.stdout?.on("data", (data: Buffer) => {
-      const output = data.toString().trim();
+      const output = data.toString();
       if (output) {
         output.split("\n").forEach((line) => {
+          if (!line.trim()) return;
+
+          // Detect build start (file watching)
+          if (line.includes("Watching")) {
+            clearErrorBuffer();
+            isBuilding = true;
+          }
+
           log(line);
 
           // Detect build completion
@@ -148,6 +182,7 @@ export default function moonbitPlugin(
           ) {
             isBuilding = false;
             lastBuildSuccess = true;
+            clearErrorBuffer();
             triggerHMR();
           }
         });
@@ -155,10 +190,22 @@ export default function moonbitPlugin(
     });
 
     moonProcess.stderr?.on("data", (data: Buffer) => {
-      const output = data.toString().trim();
+      const output = data.toString();
       if (output) {
+        // Clear previous errors on new build output
+        if (errorBuffer.length === 0) {
+          // New error session - clear screen first
+          console.clear();
+          console.log("\n\x1b[1;31m--- MoonBit Build Errors ---\x1b[0m\n");
+        }
+
         output.split("\n").forEach((line) => {
-          log(line, "error");
+          if (!line) return;
+
+          // Store raw error with ANSI codes
+          errorBuffer.push(line);
+          // Print immediately with preserved colors
+          process.stderr.write(line + "\n");
 
           // Detect build errors
           if (line.includes("error") || line.includes("Error")) {
@@ -228,8 +275,10 @@ export default function moonbitPlugin(
       buildWatcher = fs.watch(
         buildDir,
         { recursive: true },
-        (eventType, filename) => {
+        (_eventType, filename) => {
           if (filename?.endsWith(".js")) {
+            // Clear errors on successful rebuild
+            clearErrorBuffer();
             log(`Detected change: ${filename}`);
             triggerHMR();
           }
@@ -304,16 +353,13 @@ export default function moonbitPlugin(
           return VIRTUAL_MODULE_PREFIX + id.slice(MBT_PREFIX.length);
         }
 
-        // Log buffered messages and return null to let Vite handle the error
-        const logs = flushLogBuffer();
-        if (logs.length > 0) {
-          console.log("\n--- MoonBit Build Logs ---");
-          logs.forEach((l) => console.log(l));
-          console.log("----------------------------\n");
+        // Show errors with preserved colors when module resolution fails
+        if (errorBuffer.length > 0) {
+          printErrorBuffer();
         }
 
         console.error(
-          `[moonbit] Could not resolve: ${id} -> ${resolved || "unknown"}`
+          `\x1b[31m[moonbit] Could not resolve: ${id} -> ${resolved || "unknown"}\x1b[0m`
         );
         return null;
       }
@@ -328,16 +374,12 @@ export default function moonbitPlugin(
 
         if (resolved && fs.existsSync(resolved)) {
           const content = fs.readFileSync(resolved, "utf-8");
-
-          // Flush any buffered logs
-          const logs = flushLogBuffer();
-          if (logs.length > 0 && isBuilding) {
-            console.log("\n--- MoonBit Build Logs ---");
-            logs.forEach((l) => console.log(l));
-            console.log("----------------------------\n");
-          }
-
           return content;
+        }
+
+        // Show errors with preserved colors when module loading fails
+        if (errorBuffer.length > 0) {
+          printErrorBuffer();
         }
 
         throw new Error(`[moonbit] Module not found: ${resolved}`);

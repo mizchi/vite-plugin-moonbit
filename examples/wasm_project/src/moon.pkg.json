@@ -1,0 +1,12 @@
+{
+  "import": [
+    "mizchi/markdown"
+  ],
+  "link": {
+    "js": {
+      "exports": [
+        "parse_markdown"
+      ]
+    }
+  }
+}

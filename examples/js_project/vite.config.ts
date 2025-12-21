@@ -1,11 +1,10 @@
 import { defineConfig } from 'vite';
-import moonbit from '../dist/index.js';
+import moonbit from '../../dist/index.mjs';
 
 export default defineConfig({
   plugins: [
     moonbit({
-      // test ディレクトリ自体が MoonBit プロジェクト
-      watch: false,
+      watch: true,
       showLogs: true,
     })
   ],

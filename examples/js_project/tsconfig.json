@@ -1,16 +1,20 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
+    "target": "ES2023",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ES2022", "DOM"],
+    "noEmit": true,
+    "allowJs": true,
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "baseUrl": ".",
     "paths": {
-      "mbt:test/app": ["./target/js/release/build/app.d.ts"]
+      "mbt:internal/app": [
+        "./target/js/release/build/app.js"
+      ]
     }
   },
-  "include": ["*.ts"]
+  "include": [
+    "*.ts"
+  ]
 }
