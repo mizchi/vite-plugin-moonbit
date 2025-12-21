@@ -1,0 +1,49 @@
+{
+  "name": "vite-plugin-moonbit",
+  "version": "0.0.1",
+  "description": "Vite plugin for MoonBit - import MoonBit modules with mbt: prefix",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "prepublishOnly": "npm run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mizchi/vite-plugin-moonbit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mizchi/vite-plugin-moonbit/issues"
+  },
+  "homepage": "https://github.com/mizchi/vite-plugin-moonbit#readme",
+  "keywords": [
+    "vite",
+    "vite-plugin",
+    "moonbit",
+    "mbt"
+  ],
+  "author": "mizchi",
+  "license": "MIT",
+  "peerDependencies": {
+    "vite": ">=5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.0.0",
+    "vite": "^6.0.0"
+  }
+}
