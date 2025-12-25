@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Plugin, ViteDevServer, ResolvedConfig } from "vite";
 
-export interface MoonBitPluginOptions {
+export interface MoonbitPluginOptions {
   /**
    * Root directory of the MoonBit project (where moon.mod.json is located)
    * @default process.cwd()
@@ -44,7 +44,7 @@ const MBT_PREFIX = "mbt:";
 const VIRTUAL_MODULE_PREFIX = "\0mbt:";
 
 export default function moonbitPlugin(
-  options: MoonBitPluginOptions = {}
+  options: MoonbitPluginOptions = {}
 ): Plugin {
   const {
     root = process.cwd(),
@@ -400,4 +400,4 @@ export { init };
   };
 }
 
-export { moonbitPlugin };
+export { moonbitPlugin as moonbit };
