@@ -1,0 +1,17 @@
+{
+  "is-main": true,
+  "supported-targets": [
+    "js"
+  ],
+  "import": [
+    "mizchi/luna",
+    {
+      "path": "mizchi/luna/platform/dom/element",
+      "alias": "element"
+    },
+    {
+      "path": "mizchi/js/browser/dom",
+      "alias": "dom"
+    }
+  ]
+}
