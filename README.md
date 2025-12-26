@@ -18,7 +18,7 @@ pnpm add -D vite-plugin-moonbit
 ```js
 // vite.config.ts
 import { defineConfig } from 'vite';
-import moonbit from 'vite-plugin-moonbit';
+import { moonbit } from 'vite-plugin-moonbit';
 
 export default defineConfig({
   plugins: [

@@ -6,7 +6,7 @@
   "import": [
     "mizchi/luna",
     {
-      "path": "mizchi/luna/platform/dom/element",
+      "path": "mizchi/luna/luna/dom/element",
       "alias": "element"
     },
     {

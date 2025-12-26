@@ -6,7 +6,7 @@ using @element {div, h1, p, button, text, text_dyn, events}
 ///|
 fn main {
   guard @dom.document().getElementById("app") is Some(el)
-  @element.render(el |> @element.DomElement::from_jsdom, counter_app())
+  @element.render(el |> @element.DomElement::from_dom, counter_app())
 }
 
 ///|
