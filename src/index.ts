@@ -111,11 +111,11 @@ export default function moonbitPlugin(
   function printErrorBuffer() {
     if (errorBuffer.length === 0) return;
 
-    // Clear terminal
-    console.clear();
+    // Print separator line
+    console.log("\n");
 
-    // Print header
-    console.log("\n\x1b[1;31m--- MoonBit Build Errors ---\x1b[0m\n");
+    // Print header in red
+    console.log("\x1b[1;31m--- MoonBit Build Errors ---\x1b[0m\n");
 
     // Print errors with preserved ANSI colors
     errorBuffer.forEach((line) => {
@@ -123,6 +123,10 @@ export default function moonbitPlugin(
     });
 
     console.log("\n\x1b[1;31m----------------------------\x1b[0m\n");
+  }
+
+  function printBuildSuccess() {
+    console.log("\n\x1b[1;32m--- MoonBit Build OK ---\x1b[0m\n");
   }
 
   function log(message: string, type: "info" | "warn" | "error" = "info") {
@@ -178,6 +182,7 @@ export default function moonbitPlugin(
             line.includes("moon: ran")
           ) {
             clearErrorBuffer();
+            printBuildSuccess();
             triggerHMR();
           }
         });
@@ -187,10 +192,8 @@ export default function moonbitPlugin(
     moonProcess.stderr?.on("data", (data: Buffer) => {
       const output = data.toString();
       if (output) {
-        // Clear previous errors on new build output
+        // Print header on first error in this session
         if (errorBuffer.length === 0) {
-          // New error session - clear screen first
-          console.clear();
           console.log("\n\x1b[1;31m--- MoonBit Build Errors ---\x1b[0m\n");
         }
 
@@ -201,7 +204,6 @@ export default function moonbitPlugin(
           errorBuffer.push(line);
           // Print immediately with preserved colors
           process.stderr.write(line + "\n");
-
         });
       }
     });
