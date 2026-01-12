@@ -67,7 +67,7 @@ Optional: `tsconfig.json`'s paths
     // ...
     "paths": {
       "mbt:internal/app": [
-        "./target/js/release/build/app.js"
+        "./_build/js/release/build/app.js"
       ]
     }
   }
@@ -92,7 +92,7 @@ export default defineConfig({
 
 ```typescript
 // main.ts
-import init from './target/wasm-gc/release/build/app.wasm?init';
+import init from './_build/wasm-gc/release/build/app.wasm?init';
 
 const instance = await init();
 const { add } = instance.exports as { add: (a: number, b: number) => number };
@@ -116,7 +116,7 @@ Check out: `npx tiged mizchi/vite-plugin-moonbit/examples/wasm_project myapp`
 
 | Import | JS Backend | WASM-GC Backend |
 |--------|------------|-----------------|
-| `mbt:user/pkg` | `target/js/release/build/pkg.js` | `target/wasm-gc/release/build/pkg.wasm` |
+| `mbt:user/pkg` | `_build/js/release/build/pkg.js` | `_build/wasm-gc/release/build/pkg.wasm` |
 
 ## License
 

@@ -10,7 +10,7 @@
     "skipLibCheck": true,
     "paths": {
       "mbt:internal/app": [
-        "./target/js/release/build/app.js"
+        "./_build/js/release/build/app.js"
       ]
     }
   },

@@ -61,7 +61,7 @@ export default function moonbitPlugin(
   let logBuffer: string[] = [];
   let errorBuffer: string[] = [];
 
-  const buildDir = path.join(root, "target", target, mode, "build");
+  const buildDir = path.join(root, "_build", target, mode, "build");
   const fileExt = target === "js" ? ".js" : ".wasm";
 
   function readModuleInfo(): ModuleInfo | null {
