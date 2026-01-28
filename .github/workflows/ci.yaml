@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build plugin
+        run: pnpm build
+
+  examples:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        example: [js_project, wasm_project, luna_project]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install MoonBit CLI
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: Moon update
+        run: moon update
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: Install root dependencies
+        run: pnpm install
+
+      - name: Build plugin
+        run: pnpm build
+
+      - name: Install mooncakes
+        working-directory: examples/${{ matrix.example }}
+        run: moon install
+
+      - name: Install example dependencies
+        working-directory: examples/${{ matrix.example }}
+        run: pnpm install
+
+      - name: Moon build
+        working-directory: examples/${{ matrix.example }}
+        run: moon build
+
+      - name: Vite build
+        working-directory: examples/${{ matrix.example }}
+        run: pnpm build
