@@ -369,7 +369,9 @@ export default function moonbitPlugin(
             return content;
           } else {
             // WASM backend: generate loader code using Vite's ?init
-            const relativePath = path.relative(root, resolved).replace(/\\/g, "/");
+            // Use config.root (Vite's project root) instead of root (MoonBit root)
+            // to correctly resolve paths in nested project structures
+            const relativePath = path.relative(config.root, resolved).replace(/\\/g, "/");
             return `
 import init from "/${relativePath}?init";
 
