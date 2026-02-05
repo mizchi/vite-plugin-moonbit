@@ -33,6 +33,14 @@ export interface MoonbitPluginOptions {
    * @default true
    */
   showLogs?: boolean;
+
+  /**
+   * Enables support for JS String Builtins in `wasm-gc` target.
+   * Required when using `"use-js-builtin-string": true` in MoonBit configuration.
+   * 
+   * @default false
+   */
+  useJsBuiltinString?: boolean;
 }
 
 interface ModuleInfo {
@@ -52,6 +60,7 @@ export default function moonbitPlugin(
     mode = "release",
     target = "js",
     showLogs = true,
+    useJsBuiltinString = false,
   } = options;
 
   let config: ResolvedConfig;
@@ -372,12 +381,40 @@ export default function moonbitPlugin(
             // Use config.root (Vite's project root) instead of root (MoonBit root)
             // to correctly resolve paths in nested project structures
             const relativePath = path.relative(config.root, resolved).replace(/\\/g, "/");
-            return `
+
+            if (useJsBuiltinString) {
+              // Vite's default `?init` helper does not allow passing the 3rd argument (compile options)
+              // to `WebAssembly.instantiateStreaming`.
+              // We need to implement a manual loader to enable `js-string-builtins`.
+              return `
+import wasmUrl from "/${relativePath}?url";
+
+async function init(imports = {}) {
+  const compileOptions = {
+    builtins: ["js-string"],
+    importedStringConstants: "_",
+  };
+
+  const { instance } = await WebAssembly.instantiateStreaming(
+    fetch(wasmUrl),
+    imports,
+    compileOptions,
+  );
+
+  return instance;
+}
+
+export default init;
+export { init };
+`;
+            } else {
+              return `
 import init from "/${relativePath}?init";
 
 export default init;
 export { init };
 `;
+            }
           }
         }
 
