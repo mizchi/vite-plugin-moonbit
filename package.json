@@ -1,6 +1,6 @@
 {
   "name": "vite-plugin-moonbit",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Vite plugin for MoonBit - import MoonBit modules with mbt: prefix",
   "type": "module",
   "main": "./dist/index.mjs",
