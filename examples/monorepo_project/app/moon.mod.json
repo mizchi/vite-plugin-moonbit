@@ -1,0 +1,9 @@
+{
+  "name": "internal/app",
+  "version": "0.0.1",
+  "deps": {
+    "internal/shared": { "path": "../shared" }
+  },
+  "source": "src",
+  "preferred-target": "js"
+}

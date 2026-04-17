@@ -1,0 +1,5 @@
+members = [
+  "./app",
+  "./shared",
+]
+preferred_target = "js"

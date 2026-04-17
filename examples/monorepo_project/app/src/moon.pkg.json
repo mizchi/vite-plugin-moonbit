@@ -1,0 +1,12 @@
+{
+  "import": [
+    "internal/shared"
+  ],
+  "link": {
+    "js": {
+      "exports": [
+        "greet"
+      ]
+    }
+  }
+}
