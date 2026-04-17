@@ -43,13 +43,21 @@ export interface MoonbitPluginOptions {
   useJsBuiltinString?: boolean;
 }
 
-interface ModuleInfo {
+interface Member {
   name: string;
   source: string;
+  memberDir: string;
+}
+
+interface ProjectInfo {
+  workspaceRoot: string;
+  members: Member[];
+  isWorkspace: boolean;
 }
 
 const MBT_PREFIX = "mbt:";
 const VIRTUAL_MODULE_PREFIX = "\0mbt:";
+const MOON_WORK_FILES = ["moon.work", "moon.work.json"];
 
 export default function moonbitPlugin(
   options: MoonbitPluginOptions = {}
@@ -66,51 +74,165 @@ export default function moonbitPlugin(
   let config: ResolvedConfig;
   let server: ViteDevServer | null = null;
   let moonProcess: ChildProcess | null = null;
-  let moduleInfo: ModuleInfo | null = null;
+  let projectInfo: ProjectInfo | null = null;
   let logBuffer: string[] = [];
   let errorBuffer: string[] = [];
 
-  const buildDir = path.join(root, "_build", target, mode, "build");
   const fileExt = target === "js" ? ".js" : ".wasm";
 
-  function readModuleInfo(): ModuleInfo | null {
-    const modPath = path.join(root, "moon.mod.json");
+  function getBuildDir(): string {
+    const base = projectInfo?.workspaceRoot ?? root;
+    return path.join(base, "_build", target, mode, "build");
+  }
+
+  function readMemberInfo(memberDir: string): Member | null {
     try {
-      const content = fs.readFileSync(modPath, "utf-8");
+      const content = fs.readFileSync(
+        path.join(memberDir, "moon.mod.json"),
+        "utf-8"
+      );
       const mod = JSON.parse(content);
+      if (!mod.name) return null;
       return {
-        name: mod.name || "",
+        name: mod.name,
         source: mod.source || "src",
+        memberDir,
       };
     } catch {
       return null;
     }
   }
 
-  function resolveModulePath(id: string): string | null {
-    if (!moduleInfo) return null;
+  /**
+   * Parse the TOML-like DSL used by `moon.work`.
+   * Only `members = [...]` is consumed here; other keys are ignored.
+   * `moon.work.json` is parsed as plain JSON.
+   */
+  function parseWorkspaceManifest(
+    manifestPath: string
+  ): { members: string[] } | null {
+    try {
+      const content = fs.readFileSync(manifestPath, "utf-8");
+      if (manifestPath.endsWith(".json")) {
+        const parsed = JSON.parse(content);
+        return {
+          members: Array.isArray(parsed.members) ? parsed.members : [],
+        };
+      }
+      // moon.work DSL: find `members = [...]` block and extract quoted strings.
+      const match = content.match(/members\s*=\s*\[([\s\S]*?)\]/);
+      if (!match) return { members: [] };
+      const members = Array.from(match[1].matchAll(/"([^"]*)"/g)).map(
+        (m) => m[1]
+      );
+      return { members };
+    } catch {
+      return null;
+    }
+  }
 
-    // Parse mbt:username/pkg/path/to/module
-    const parts = id.slice(MBT_PREFIX.length).split("/");
-    if (parts.length < 2) return null;
+  function findWorkspaceManifest(startDir: string): string | null {
+    let dir = path.resolve(startDir);
+    while (true) {
+      for (const name of MOON_WORK_FILES) {
+        const candidate = path.join(dir, name);
+        if (fs.existsSync(candidate)) return candidate;
+      }
+      const parent = path.dirname(dir);
+      if (parent === dir) return null;
+      dir = parent;
+    }
+  }
 
-    // Skip username/pkg (first two parts matching moon.mod.json name)
-    const moduleNameParts = moduleInfo.name.split("/");
-    const pathParts = parts.slice(moduleNameParts.length);
+  function findModuleManifest(startDir: string): string | null {
+    let dir = path.resolve(startDir);
+    while (true) {
+      const candidate = path.join(dir, "moon.mod.json");
+      if (fs.existsSync(candidate)) return candidate;
+      const parent = path.dirname(dir);
+      if (parent === dir) return null;
+      dir = parent;
+    }
+  }
 
-    // Handle root package (when pathParts is empty)
-    if (pathParts.length === 0) {
-      // Root package: use the last part of module name
-      // e.g., "test/app" -> "app.js" or "app.wasm"
-      const rootModuleName = moduleNameParts[moduleNameParts.length - 1];
-      return path.join(buildDir, `${rootModuleName}${fileExt}`);
+  function readProjectInfo(): ProjectInfo | null {
+    const workspaceManifest = findWorkspaceManifest(root);
+    if (workspaceManifest) {
+      const workspaceRoot = path.dirname(workspaceManifest);
+      const parsed = parseWorkspaceManifest(workspaceManifest);
+      if (!parsed) return null;
+
+      const members: Member[] = [];
+      for (const memberPath of parsed.members) {
+        const memberDir = path.resolve(workspaceRoot, memberPath);
+        const member = readMemberInfo(memberDir);
+        if (member) members.push(member);
+        else
+          console.warn(
+            `[moonbit] workspace member has no readable moon.mod.json: ${memberDir}`
+          );
+      }
+      return { workspaceRoot, members, isWorkspace: true };
     }
 
-    // Build the file path: target/{backend}/{mode}/build/path/to/module/module.{ext}
-    const moduleName = pathParts[pathParts.length - 1];
-    const modulePath = path.join(buildDir, ...pathParts, `${moduleName}${fileExt}`);
+    const moduleManifest = findModuleManifest(root);
+    if (!moduleManifest) return null;
+    const memberDir = path.dirname(moduleManifest);
+    const member = readMemberInfo(memberDir);
+    if (!member) return null;
+    return {
+      workspaceRoot: memberDir,
+      members: [member],
+      isWorkspace: false,
+    };
+  }
 
-    return modulePath;
+  /**
+   * Pick the member whose `name` is the longest slash-separated prefix of `parts`.
+   */
+  function matchMember(parts: string[]): Member | null {
+    if (!projectInfo) return null;
+    let best: Member | null = null;
+    let bestLen = 0;
+    for (const member of projectInfo.members) {
+      const segs = member.name.split("/");
+      if (segs.length > parts.length) continue;
+      const prefix = parts.slice(0, segs.length);
+      if (prefix.join("/") !== member.name) continue;
+      if (segs.length > bestLen) {
+        best = member;
+        bestLen = segs.length;
+      }
+    }
+    return best;
+  }
+
+  function resolveModulePath(id: string): string | null {
+    if (!projectInfo) return null;
+
+    const parts = id.slice(MBT_PREFIX.length).split("/");
+    const member = matchMember(parts);
+    if (!member) return null;
+
+    const memberNameSegs = member.name.split("/");
+    const pkgParts = parts.slice(memberNameSegs.length);
+    // Short alias = last segment of pkg path, or last segment of module name
+    // when importing the root package of a module.
+    const shortAlias =
+      pkgParts.length > 0
+        ? pkgParts[pkgParts.length - 1]
+        : memberNameSegs[memberNameSegs.length - 1];
+
+    const buildDir = getBuildDir();
+    // Workspace (multi-root) layout prefixes the module name segments;
+    // single-module (legacy) layout flattens the main module.
+    const moduleSegs = projectInfo.isWorkspace ? memberNameSegs : [];
+    return path.join(
+      buildDir,
+      ...moduleSegs,
+      ...pkgParts,
+      `${shortAlias}${fileExt}`
+    );
   }
 
   function clearErrorBuffer() {
@@ -163,9 +285,15 @@ export default function moonbitPlugin(
   function startWatchProcess() {
     if (moonProcess) return;
 
-    log(`Starting moon build --target ${target} --watch...`);
-    moonProcess = spawn("moon", ["build", "--target", target, "--watch"], {
-      cwd: root,
+    const cwd = projectInfo?.workspaceRoot ?? root;
+    const args = ["build", "--target", target, "--watch"];
+    // moon defaults to debug; pass --release when the plugin is in release mode
+    // so the watch output lands where the resolver looks.
+    if (mode === "release") args.push("--release");
+
+    log(`Starting moon ${args.join(" ")} (cwd=${cwd})...`);
+    moonProcess = spawn("moon", args, {
+      cwd,
       stdio: ["ignore", "pipe", "pipe"],
       shell: true,
       env: { ...process.env, FORCE_COLOR: "1" }, // Force ANSI colors
@@ -265,6 +393,7 @@ export default function moonbitPlugin(
     if (buildWatcher) return;
 
     try {
+      const buildDir = getBuildDir();
       // Ensure build directory exists
       if (!fs.existsSync(buildDir)) {
         log(`Build directory does not exist yet: ${buildDir}`, "warn");
@@ -316,13 +445,21 @@ export default function moonbitPlugin(
 
     configResolved(resolvedConfig) {
       config = resolvedConfig;
-      moduleInfo = readModuleInfo();
+      projectInfo = readProjectInfo();
 
-      if (!moduleInfo) {
+      if (!projectInfo) {
         console.warn(
-          "[moonbit] Could not find moon.mod.json in",
+          "[moonbit] Could not find moon.work, moon.work.json, or moon.mod.json starting from",
           root
         );
+      } else if (projectInfo.isWorkspace) {
+        log(
+          `workspace mode (${projectInfo.members.length} members): ${projectInfo.members
+            .map((m) => m.name)
+            .join(", ")}`
+        );
+      } else {
+        log(`single-module mode: ${projectInfo.members[0].name}`);
       }
     },
 
@@ -429,8 +566,8 @@ export { init };
     },
 
     buildStart() {
-      if (!moduleInfo) {
-        moduleInfo = readModuleInfo();
+      if (!projectInfo) {
+        projectInfo = readProjectInfo();
       }
     },
 

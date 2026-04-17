@@ -8,6 +8,7 @@ Vite plugin for MoonBit projects. Supports both JS and WASM-GC backends.
 - Auto-starts `moon build --watch`
 - HMR on file changes
 - JS and WASM-GC backend support
+- MoonBit workspace (`moon.work`) / monorepo support
 
 ## Install
 
@@ -114,9 +115,43 @@ Check out: `npx tiged mizchi/vite-plugin-moonbit/examples/wasm_project myapp`
 
 ## Path Resolution
 
-| Import | JS Backend | WASM-GC Backend |
-|--------|------------|-----------------|
+The plugin searches upward from `root` for `moon.work` / `moon.work.json`
+(workspace) first, then for `moon.mod.json` (single module). The resolved
+project root is where `_build/` is expected.
+
+### Single module (legacy layout)
+
+| Import | JS | WASM-GC |
+|---|---|---|
 | `mbt:user/pkg` | `_build/js/release/build/pkg.js` | `_build/wasm-gc/release/build/pkg.wasm` |
+| `mbt:user/pkg/sub` | `_build/js/release/build/sub/sub.js` | `_build/wasm-gc/release/build/sub/sub.wasm` |
+
+### Workspace (`moon.work`, multi-root layout)
+
+Module name segments are inserted before the package path. `mbt:` imports are
+matched against every workspace member's `moon.mod.json#name` by longest
+prefix, so all members share one resolver.
+
+| Import | JS |
+|---|---|
+| `mbt:internal/app` | `_build/js/release/build/internal/app/app.js` |
+| `mbt:internal/shared` | `_build/js/release/build/internal/shared/shared.js` |
+| `mbt:internal/app/util` | `_build/js/release/build/internal/app/util/util.js` |
+
+See [examples/monorepo_project](./examples/monorepo_project) for a full
+working workspace with two members (`internal/app` depends on
+`internal/shared` via a path `deps`).
+
+```
+// moon.work (at the workspace root)
+members = [
+  "./app",
+  "./shared",
+]
+```
+
+When running in workspace mode, `moon build --watch` is spawned at the
+workspace root so all members are built together into a single `_build/`.
 
 ## License
 
