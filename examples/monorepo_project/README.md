@@ -32,47 +32,75 @@ members = [
 preferred_target = "js"
 ```
 
-`moon work init ./app ./shared` で自動生成される想定のファイル。JSON ではなく TOML 風の mini-DSL である点に注意 (ファイル名も `moon.work`、`moon.work.json` ではない)。
+`moon work init ./app ./shared` で実際に生成されるファイルと同じ形式 (空行を挟む)。
+JSON ではなく TOML 風の mini-DSL であり、ファイル名は `moon.work` (`moon.work.json` も受理される、`moon work --help` の `--manifest-path` 参照)。
 
-## ビルド成果物レイアウト
+## 確認したビルド成果物レイアウト
 
-workspace モードでは moon の build artifact layout が **multi-root** に切り替わり、モジュール名セグメントが 1 階層挿入される:
+`moon build --target js` 実行後 (実環境で確認済み):
 
-| モード | 出力パス (JS バックエンド) |
-|---|---|
-| 単一モジュール | `_build/js/release/build/<pkg>/<pkg>.js` |
-| **workspace** | `_build/js/release/build/<module_name>/<pkg>/<pkg>.js` |
+```
+_build/
+├── .moon-lock
+└── js/
+    ├── debug/build/
+    │   ├── all_pkgs.json
+    │   ├── build.moon_db
+    │   ├── internal/app/
+    │   │   ├── app.js
+    │   │   ├── app.mi
+    │   │   ├── app.core
+    │   │   ├── app.d.ts
+    │   │   └── ...
+    │   └── internal/shared/
+    │       ├── shared.js
+    │       ├── shared.mi
+    │       └── ...
+    └── release/build/
+        ├── internal/app/app.js
+        └── internal/shared/shared.js
+```
 
-このサンプルでは以下を想定:
+ポイント:
 
-- `mbt:internal/app`    → `_build/js/release/build/internal/app/app.js`
-- `mbt:internal/shared` → `_build/js/release/build/internal/shared/shared.js`
+- `_build/` と `.mooncakes/` は **ワークスペースルート直下に 1 つだけ**。メンバーごとには作られない。
+- 成果物は **multi-root layout**: `_build/<backend>/<mode>/build/<module_name_segments>/<pkg_segments>/<short_alias>.<ext>`
+- モジュール名のセグメント (例: `internal/app`) が 1 階層挿入されるため、単一モジュール時の `_build/js/release/build/app.js` とは **パスが異なる**。
+- `moon build` のデフォルトは `debug` (単一モジュールと同様)。release は `--release` で明示指定。
+- JS バックエンドでは依存モジュールの関数はインライン化されてエントリの `.js` に取り込まれる (`app.js` の中に `banner` の本体が展開される)。
 
-`.mooncakes/` と `_build/` は **ワークスペースルート直下に 1 つだけ** 生成される (メンバーごとには作られない)。
+## 現行 vite-plugin-moonbit (0.1.5) との互換性
 
-## 現状の vite-plugin-moonbit との互換性
+実際に `pnpm vite build` を実行すると以下のエラー (実測):
 
-現行 resolver (`src/index.ts`) は単一モジュール前提のため、このサンプルはそのままでは動かない:
+```
+[moonbit] Could not find moon.mod.json in /.../examples/monorepo_project
+[moonbit] Could not resolve: mbt:internal/app -> unknown
+[moonbit] Could not resolve: mbt:internal/shared -> unknown
+Error: [vite]: Rolldown failed to resolve import "mbt:internal/app" from "main.ts".
+```
 
-1. `readModuleInfo()` が `root/moon.mod.json` を読もうとするが、ワークスペースルートには無いので `null` になり警告が出る。
-2. `resolveModulePath()` のパス組み立てに `<module_name_segments>` の階層が足りず、成果物を発見できない。
-3. 複数モジュールに対応するため、`mbt:<user>/<mod>/...` の `<user>/<mod>` 部分を全メンバーの `moon.mod.json` の `name` に対して照合する必要がある。
+原因 (`src/index.ts`):
 
-拡張方針:
+1. `readModuleInfo()` が `root/moon.mod.json` を直接読むため、`moon.work` しかないルートでは `null`。
+2. `resolveModulePath()` の出力パス計算に `<module_name_segments>` の階層が足りない (現行: `_build/js/release/build/app.js`、正: `_build/js/release/build/internal/app/app.js`)。
+3. 複数モジュールのマッチングが無い (`moduleInfo` は 1 つだけ)。
 
-- `root` から上方向に `moon.work` を探索し、見つかれば workspace モードに切り替え
-- `members` を読んで各メンバーの `moon.mod.json` をロード (name, source のマップ構築)
-- インポート `mbt:X/Y/...` を最長一致で該当メンバーに振り分け、出力パスは multi-root レイアウトで解決
-- `moon build --watch` はワークスペースルートで起動 (moon が `moon.work` を自動検出)
+## 拡張方針 (検討)
+
+- `root` から上方向に `moon.work` / `moon.work.json` を探索し、見つかれば **workspace モード** に切り替え。
+- `moon.work` の `members` を読み、各メンバーの `moon.mod.json` をロードして `{ name, source, dir }[]` を構築。
+- `mbt:<user>/<mod>/...` を全メンバーの `name` と最長一致でルーティング。
+- 出力パスは workspace モード時: `_build/<backend>/<mode>/build/<moduleNameSegs>/<pkgSegs>/<shortAlias>.<ext>`。
+- `moon build --target <t> --watch` はワークスペースルートで起動 (moon 側が `moon.work` を自動検出して全メンバーをビルド)。
+- `preferred_target` が `moon.work` にあればプラグインオプションのデフォルトに使う (任意)。
 
 ## 実行
 
-> **注意**: 現行の plugin (0.1.x) ではこのサンプルは resolver エラーで落ちる。拡張実装後に動作する想定。
-
 ```bash
-# 事前に moon v0.9+ が必要
+# 要 moon v0.9+ (moon work コマンドが存在すること)
 cd examples/monorepo_project
-moon build          # _build/ がワークスペース直下に作られる
+moon build --target js   # -> _build/js/debug/build/internal/{app,shared}/*.js
 pnpm install
-pnpm dev
+pnpm dev                 # 現状の plugin では resolver エラーで失敗する
 ```
