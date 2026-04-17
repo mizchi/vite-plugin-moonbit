@@ -131,60 +131,75 @@ export default function moonbitPlugin(
     }
   }
 
-  function findWorkspaceManifest(startDir: string): string | null {
-    let dir = path.resolve(startDir);
-    while (true) {
-      for (const name of MOON_WORK_FILES) {
-        const candidate = path.join(dir, name);
-        if (fs.existsSync(candidate)) return candidate;
-      }
-      const parent = path.dirname(dir);
-      if (parent === dir) return null;
-      dir = parent;
-    }
-  }
-
-  function findModuleManifest(startDir: string): string | null {
-    let dir = path.resolve(startDir);
-    while (true) {
-      const candidate = path.join(dir, "moon.mod.json");
+  function workspaceManifestAt(dir: string): string | null {
+    for (const name of MOON_WORK_FILES) {
+      const candidate = path.join(dir, name);
       if (fs.existsSync(candidate)) return candidate;
-      const parent = path.dirname(dir);
-      if (parent === dir) return null;
-      dir = parent;
     }
+    return null;
   }
 
-  function readProjectInfo(): ProjectInfo | null {
-    const workspaceManifest = findWorkspaceManifest(root);
-    if (workspaceManifest) {
-      const workspaceRoot = path.dirname(workspaceManifest);
-      const parsed = parseWorkspaceManifest(workspaceManifest);
-      if (!parsed) return null;
+  function parseMembers(manifestPath: string): Member[] {
+    const parsed = parseWorkspaceManifest(manifestPath);
+    if (!parsed) return [];
+    const workspaceRoot = path.dirname(manifestPath);
+    const members: Member[] = [];
+    for (const memberPath of parsed.members) {
+      const memberDir = path.resolve(workspaceRoot, memberPath);
+      const member = readMemberInfo(memberDir);
+      if (member) members.push(member);
+      else
+        console.warn(
+          `[moonbit] workspace member has no readable moon.mod.json: ${memberDir}`
+        );
+    }
+    return members;
+  }
 
-      const members: Member[] = [];
-      for (const memberPath of parsed.members) {
-        const memberDir = path.resolve(workspaceRoot, memberPath);
-        const member = readMemberInfo(memberDir);
-        if (member) members.push(member);
-        else
-          console.warn(
-            `[moonbit] workspace member has no readable moon.mod.json: ${memberDir}`
-          );
+  /**
+   * Mirrors moon's own logic (`find_applicable_workspace_manifest_path`):
+   * walk ancestors, prefer the nearest `moon.mod.json` when it is not a member
+   * of any ancestor workspace. A `moon.work` only wins if the nearest module
+   * is listed in its `members` (or no module has been seen yet).
+   */
+  function readProjectInfo(): ProjectInfo | null {
+    let dir = path.resolve(root);
+    let nearestModuleDir: string | null = null;
+
+    while (true) {
+      const workspaceManifest = workspaceManifestAt(dir);
+      if (workspaceManifest) {
+        const members = parseMembers(workspaceManifest);
+        const workspaceRoot = path.dirname(workspaceManifest);
+        const memberDirs = new Set(
+          members.map((m) => path.resolve(m.memberDir))
+        );
+        if (nearestModuleDir === null || memberDirs.has(nearestModuleDir)) {
+          return { workspaceRoot, members, isWorkspace: true };
+        }
+        // Nearest module is not a member of this workspace: skip and keep walking.
+      } else if (
+        nearestModuleDir === null &&
+        fs.existsSync(path.join(dir, "moon.mod.json"))
+      ) {
+        nearestModuleDir = dir;
       }
-      return { workspaceRoot, members, isWorkspace: true };
+
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
     }
 
-    const moduleManifest = findModuleManifest(root);
-    if (!moduleManifest) return null;
-    const memberDir = path.dirname(moduleManifest);
-    const member = readMemberInfo(memberDir);
-    if (!member) return null;
-    return {
-      workspaceRoot: memberDir,
-      members: [member],
-      isWorkspace: false,
-    };
+    if (nearestModuleDir) {
+      const member = readMemberInfo(nearestModuleDir);
+      if (!member) return null;
+      return {
+        workspaceRoot: nearestModuleDir,
+        members: [member],
+        isWorkspace: false,
+      };
+    }
+    return null;
   }
 
   /**
@@ -208,31 +223,40 @@ export default function moonbitPlugin(
   }
 
   function resolveModulePath(id: string): string | null {
-    if (!projectInfo) return null;
+    const candidates = resolveCandidates(id);
+    if (candidates.length === 0) return null;
+    // Return the first existing candidate, else the first candidate as the
+    // reported path for the "could not resolve" error message.
+    return candidates.find((p) => fs.existsSync(p)) ?? candidates[0];
+  }
+
+  function resolveCandidates(id: string): string[] {
+    if (!projectInfo) return [];
 
     const parts = id.slice(MBT_PREFIX.length).split("/");
     const member = matchMember(parts);
-    if (!member) return null;
+    if (!member) return [];
 
     const memberNameSegs = member.name.split("/");
     const pkgParts = parts.slice(memberNameSegs.length);
-    // Short alias = last segment of pkg path, or last segment of module name
-    // when importing the root package of a module.
     const shortAlias =
       pkgParts.length > 0
         ? pkgParts[pkgParts.length - 1]
         : memberNameSegs[memberNameSegs.length - 1];
 
     const buildDir = getBuildDir();
-    // Workspace (multi-root) layout prefixes the module name segments;
-    // single-module (legacy) layout flattens the main module.
-    const moduleSegs = projectInfo.isWorkspace ? memberNameSegs : [];
-    return path.join(
+    // Moon may flatten a single-member workspace (single-root compatibility
+    // layout) or nest (multi-root). Try both in workspace mode.
+    const flat = path.join(buildDir, ...pkgParts, `${shortAlias}${fileExt}`);
+    if (!projectInfo.isWorkspace) return [flat];
+
+    const nested = path.join(
       buildDir,
-      ...moduleSegs,
+      ...memberNameSegs,
       ...pkgParts,
       `${shortAlias}${fileExt}`
     );
+    return [nested, flat];
   }
 
   function clearErrorBuffer() {

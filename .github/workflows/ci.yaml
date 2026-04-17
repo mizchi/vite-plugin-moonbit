@@ -61,10 +61,6 @@ jobs:
       - name: Build plugin
         run: pnpm build
 
-      - name: Install mooncakes
-        working-directory: examples/${{ matrix.example }}
-        run: moon install
-
       - name: Install example dependencies
         working-directory: examples/${{ matrix.example }}
         run: pnpm install
