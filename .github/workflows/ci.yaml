@@ -33,7 +33,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        example: [js_project, wasm_project, luna_project, monorepo_project]
+        # luna_project is temporarily excluded: mizchi/luna@0.2.0 fails to
+        # compile with the current moonc (error 4033 in the dep's signal.mbt).
+        # Re-enable after the example is updated to a newer mizchi/luna.
+        example: [js_project, wasm_project, monorepo_project]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
