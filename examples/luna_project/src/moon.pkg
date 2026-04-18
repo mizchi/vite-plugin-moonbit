@@ -1,0 +1,12 @@
+import {
+  "mizchi/signals",
+  "mizchi/luna/js/resource" @resource,
+  "mizchi/luna/dom" @element,
+  "mizchi/js/browser/dom" @dom,
+}
+
+supported_targets = "js"
+
+options(
+  "is-main": true,
+)

@@ -67,32 +67,6 @@ fn canonical_top_level_key(k : String) -> String {
 }
 
 ///|
-/// Merge the contents of an `options(...)` block into the top-level object
-/// for parity with `moon.pkg.json`. Top-level keys take precedence over
-/// options ones; anything other than Obj is left alone.
-fn flatten_options(ast : @pkg.Ast) -> @pkg.Ast {
-  match ast {
-    Obj(map=m, loc=loc) =>
-      match m.get("options") {
-        Some(Obj(map=inner, ..)) => {
-          let merged : Map[String, @pkg.Ast] = Map::new()
-          for kv in inner.iter() {
-            merged[kv.0] = kv.1
-          }
-          for kv in m.iter() {
-            if kv.0 != "options" {
-              merged[kv.0] = kv.1
-            }
-          }
-          @pkg.Ast::Obj(map=merged, loc=loc)
-        }
-        _ => ast
-      }
-    _ => ast
-  }
-}
-
-///|
 fn escape(s : String) -> String {
   let buf = StringBuilder::new()
   for ch in s {
