@@ -5,6 +5,13 @@
 /// On parse errors, returns a JSON `{ "error": [ ...messages ] }` payload so
 /// the consumer doesn't have to deal with MoonBit exceptions across the FFI
 /// boundary.
+///
+/// DSL-specific normalization: the `options(...)` block produces a nested
+/// `options` object in the raw AST, but the equivalent `moon.pkg.json` shape
+/// places those same keys (`virtual`, `link`, `targets`, `native-stub`,
+/// `is-main`, etc.) at the top level. To give callers a single canonical
+/// shape, the parser flattens `options.*` into the top-level object
+/// (with top-level keys winning on any collision).
 pub fn parse(src : String) -> String {
   let (ast, reports) = @pkg.parse_string(src)
   if reports.length() > 0 {
@@ -12,7 +19,33 @@ pub fn parse(src : String) -> String {
     let msg_strs = msgs.map(fn(m) { "\"" + escape(m) + "\"" }).join(",")
     "{\"error\":[" + msg_strs + "]}"
   } else {
-    to_plain_json(ast)
+    to_plain_json(flatten_options(ast))
+  }
+}
+
+///|
+/// Merge the contents of an `options(...)` block into the top-level object
+/// for parity with `moon.pkg.json`. Top-level keys take precedence over
+/// options ones; anything other than Obj is left alone.
+fn flatten_options(ast : @pkg.Ast) -> @pkg.Ast {
+  match ast {
+    Obj(map=m, loc=loc) =>
+      match m.get("options") {
+        Some(Obj(map=inner, ..)) => {
+          let merged : Map[String, @pkg.Ast] = Map::new()
+          for kv in inner.iter() {
+            merged[kv.0] = kv.1
+          }
+          for kv in m.iter() {
+            if kv.0 != "options" {
+              merged[kv.0] = kv.1
+            }
+          }
+          @pkg.Ast::Obj(map=merged, loc=loc)
+        }
+        _ => ast
+      }
+    _ => ast
   }
 }
 
