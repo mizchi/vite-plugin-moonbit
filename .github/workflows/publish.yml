@@ -22,6 +22,8 @@ jobs:
           cache: pnpm
           registry-url: https://registry.npmjs.org
 
+      - uses: hustcer/setup-moonbit@v1
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
