@@ -1,0 +1,11 @@
+{
+  "import": [
+    { "path": "moonbitlang/parser/pkg_parser", "alias": "pkg" }
+  ],
+  "link": {
+    "js": {
+      "format": "esm",
+      "exports": ["parse"]
+    }
+  }
+}
