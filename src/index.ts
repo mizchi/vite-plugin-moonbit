@@ -231,6 +231,63 @@ export default function moonbitPlugin(
     return best;
   }
 
+  /**
+   * Reverse of resolveCandidates: given an absolute `<buildDir>/.../<x>.js`
+   * path, figure out which `mbt:<member>/...` id produces it. Used by the
+   * build watcher to know exactly which virtual module changed.
+   *
+   * Moon's layout choice is deterministic: multi-root (nested under the
+   * module name) when the workspace has 2+ members, otherwise flat.
+   */
+  function buildOutputToMbtId(filepath: string): string | null {
+    if (!projectInfo) return null;
+    const buildDir = getBuildDir();
+    const abs = path.resolve(filepath);
+    if (abs !== buildDir && !abs.startsWith(buildDir + path.sep)) return null;
+    let rel = path.relative(buildDir, abs);
+    if (!rel.endsWith(fileExt)) return null;
+    rel = rel.slice(0, -fileExt.length);
+    const parts = rel.split(path.sep).filter(Boolean);
+    if (parts.length === 0) return null;
+
+    const useNested =
+      projectInfo.isWorkspace && projectInfo.members.length > 1;
+
+    const tryMatch = (tail: string[], member: Member): string | null => {
+      if (tail.length === 0) return null;
+      const nameSegs = member.name.split("/");
+      const shortAlias = tail[tail.length - 1];
+      const pkgSegs = tail.slice(0, -1);
+      const expected =
+        pkgSegs.length > 0
+          ? pkgSegs[pkgSegs.length - 1]
+          : nameSegs[nameSegs.length - 1];
+      if (shortAlias !== expected) return null;
+      const id =
+        pkgSegs.length > 0
+          ? member.name + "/" + pkgSegs.join("/")
+          : member.name;
+      return MBT_PREFIX + id;
+    };
+
+    for (const member of projectInfo.members) {
+      const nameSegs = member.name.split("/");
+      if (useNested) {
+        if (
+          parts.length > nameSegs.length &&
+          parts.slice(0, nameSegs.length).join("/") === member.name
+        ) {
+          const id = tryMatch(parts.slice(nameSegs.length), member);
+          if (id) return id;
+        }
+      } else {
+        const id = tryMatch(parts, member);
+        if (id) return id;
+      }
+    }
+    return null;
+  }
+
   function resolveModulePath(id: string): string | null {
     const candidates = resolveCandidates(id);
     if (candidates.length === 0) return null;
@@ -468,25 +525,71 @@ export default function moonbitPlugin(
     }
   }
 
-  function triggerHMR() {
+  const pendingChanges = new Set<string>();
+  let flushTimer: NodeJS.Timeout | null = null;
+
+  function queueChange(filepath: string) {
+    pendingChanges.add(filepath);
+    if (flushTimer) return;
+    flushTimer = setTimeout(() => {
+      flushTimer = null;
+      const batch = Array.from(pendingChanges);
+      pendingChanges.clear();
+      flushHMR(batch);
+    }, 50);
+  }
+
+  function flushHMR(changed: string[]) {
     if (!server) return;
 
-    // Find all modules that start with our virtual prefix and invalidate them
-    const modulesToInvalidate = [...server.moduleGraph.idToModuleMap.entries()]
-      .filter(([id]) => id.startsWith(VIRTUAL_MODULE_PREFIX))
-      .map(([, mod]) => mod);
+    const ids = new Set<string>();
+    for (const f of changed) {
+      const id = buildOutputToMbtId(f);
+      if (id) ids.add(id);
+    }
 
-    if (modulesToInvalidate.length > 0) {
-      log(`Triggering HMR for ${modulesToInvalidate.length} MoonBit modules`);
-      modulesToInvalidate.forEach((mod) => {
-        server!.moduleGraph.invalidateModule(mod);
-      });
+    // Fallback: no individual change info (e.g. first build, or files we
+    // couldn't map). Invalidate all known mbt: modules and full-reload.
+    if (ids.size === 0) {
+      const all = [...server.moduleGraph.idToModuleMap.entries()].filter(
+        ([id]) => id.startsWith(VIRTUAL_MODULE_PREFIX)
+      );
+      if (all.length === 0) return;
+      for (const [, mod] of all) server.moduleGraph.invalidateModule(mod);
+      log(`HMR fallback: invalidated ${all.length} module(s), full-reload`);
+      server.ws.send({ type: "full-reload", path: "*" });
+      return;
+    }
 
-      // Send full reload for now (could be optimized with proper HMR)
-      server.ws.send({
-        type: "full-reload",
-        path: "*",
-      });
+    let reloaded = 0;
+    for (const id of ids) {
+      const virtualId = VIRTUAL_MODULE_PREFIX + id.slice(MBT_PREFIX.length);
+      const mod = server.moduleGraph.getModuleById(virtualId);
+      if (mod) {
+        server.reloadModule(mod);
+        reloaded++;
+      }
+    }
+    if (reloaded > 0) {
+      log(`HMR: updated ${reloaded} module(s) (${Array.from(ids).join(", ")})`);
+    } else {
+      // The moon build changed files, but no Vite module has been loaded
+      // for them yet (e.g. dev server just started). Nothing to propagate.
+    }
+  }
+
+  function triggerHMR() {
+    // Signal a flush with whatever has accumulated so far; if nothing has,
+    // fall back to invalidating all mbt: modules (for the initial build
+    // where fs.watch may have missed newly-created files).
+    if (pendingChanges.size > 0) {
+      if (flushTimer) clearTimeout(flushTimer);
+      flushTimer = null;
+      const batch = Array.from(pendingChanges);
+      pendingChanges.clear();
+      flushHMR(batch);
+    } else {
+      flushHMR([]);
     }
   }
 
@@ -508,12 +611,10 @@ export default function moonbitPlugin(
         buildDir,
         { recursive: true },
         (_eventType, filename) => {
-          if (filename?.endsWith(fileExt)) {
-            // Clear errors on successful rebuild
-            clearErrorBuffer();
-            log(`Detected change: ${filename}`);
-            triggerHMR();
-          }
+          if (!filename || !filename.endsWith(fileExt)) return;
+          // Clear errors on successful rebuild
+          clearErrorBuffer();
+          queueChange(path.join(buildDir, filename));
         }
       );
 

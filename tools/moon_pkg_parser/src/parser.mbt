@@ -6,12 +6,12 @@
 /// the consumer doesn't have to deal with MoonBit exceptions across the FFI
 /// boundary.
 ///
-/// DSL-specific normalization: the `options(...)` block produces a nested
-/// `options` object in the raw AST, but the equivalent `moon.pkg.json` shape
-/// places those same keys (`virtual`, `link`, `targets`, `native-stub`,
-/// `is-main`, etc.) at the top level. To give callers a single canonical
-/// shape, the parser flattens `options.*` into the top-level object
-/// (with top-level keys winning on any collision).
+/// DSL-specific normalization:
+/// - `options(...)` keys are flattened to the top level (to match the shape
+///   of the equivalent `moon.pkg.json`).
+/// - Bareword DSL keys that moon accepts as aliases (snake_case <-> kebab)
+///   are rewritten to the canonical kebab form, e.g. `supported_targets`
+///   -> `supported-targets`, `is_main` -> `is-main`.
 pub fn parse(src : String) -> String {
   let (ast, reports) = @pkg.parse_string(src)
   if reports.length() > 0 {
@@ -19,7 +19,41 @@ pub fn parse(src : String) -> String {
     let msg_strs = msgs.map(fn(m) { "\"" + escape(m) + "\"" }).join(",")
     "{\"error\":[" + msg_strs + "]}"
   } else {
-    to_plain_json(flatten_options(ast))
+    to_plain_json(normalize_keys(flatten_options(ast)))
+  }
+}
+
+///|
+/// Rewrite known snake_case top-level keys to their canonical kebab-case form
+/// (matching moon's serde aliases). Other keys (including file paths inside
+/// `targets: { ... }` and members of the `link` object) are left untouched.
+fn normalize_keys(ast : @pkg.Ast) -> @pkg.Ast {
+  match ast {
+    Obj(map=m, loc=loc) => {
+      let out : Map[String, @pkg.Ast] = Map::new()
+      for kv in m.iter() {
+        let canonical = canonical_top_level_key(kv.0)
+        // if a kebab form already exists, keep the explicit one.
+        if !out.contains(canonical) {
+          out[canonical] = kv.1
+        }
+      }
+      @pkg.Ast::Obj(map=out, loc=loc)
+    }
+    _ => ast
+  }
+}
+
+///|
+fn canonical_top_level_key(k : String) -> String {
+  match k {
+    "supported_targets" => "supported-targets"
+    "is_main" => "is-main"
+    "native_stub" => "native-stub"
+    "max_concurrent_tests" => "max-concurrent-tests"
+    "regex_backend" => "regex-backend"
+    "pre_build" => "pre-build"
+    _ => k
   }
 }
 
