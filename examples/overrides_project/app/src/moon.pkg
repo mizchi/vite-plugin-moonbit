@@ -1,0 +1,8 @@
+import {
+  "spec/iface" @iface,
+}
+
+options(
+  overrides: ["impls/impl_a"],
+  link: { "js": { "format": "esm", "exports": ["greet_wrapped"] } },
+)

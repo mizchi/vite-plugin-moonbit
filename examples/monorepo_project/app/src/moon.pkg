@@ -1,0 +1,7 @@
+import {
+  "internal/shared",
+}
+
+options(
+  link: { "js": { "exports": ["greet"] } },
+)

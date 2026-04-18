@@ -400,6 +400,94 @@ export default function moonbitPlugin(
     errorBuffer = [];
   }
 
+  interface MoonDiagnostic {
+    level: "warning" | "error";
+    error_code: number;
+    path: string;
+    loc: string; // "<startLine>:<startCol>-<endLine>:<endCol>"
+    message: string;
+  }
+
+  let cycleDiagnostics: MoonDiagnostic[] = [];
+
+  function tryParseDiagnostic(line: string): MoonDiagnostic | null {
+    const trimmed = line.trimStart();
+    if (!trimmed.startsWith('{"$message_type"')) return null;
+    try {
+      const obj = JSON.parse(trimmed) as {
+        $message_type?: string;
+        level?: string;
+        error_code?: number;
+        path?: string;
+        loc?: string;
+        message?: string;
+      };
+      if (
+        obj.$message_type !== "diagnostic" ||
+        (obj.level !== "warning" && obj.level !== "error") ||
+        typeof obj.path !== "string" ||
+        typeof obj.loc !== "string" ||
+        typeof obj.message !== "string"
+      ) {
+        return null;
+      }
+      return {
+        level: obj.level,
+        error_code: obj.error_code ?? 0,
+        path: obj.path,
+        loc: obj.loc,
+        message: obj.message,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  function parseLocStart(loc: string): { line: number; column: number } {
+    // Format: "sLine:sCol-eLine:eCol". Fall back to 1:1 on parse failure.
+    const m = loc.match(/^(\d+):(\d+)/);
+    return m
+      ? { line: Number(m[1]), column: Number(m[2]) }
+      : { line: 1, column: 1 };
+  }
+
+  /**
+   * Push accumulated diagnostics to Vite's error overlay (on failure) or
+   * clear it (on success). Called once per moon build cycle.
+   */
+  function commitDiagnostics(success: boolean) {
+    if (!server) {
+      cycleDiagnostics = [];
+      return;
+    }
+    const errors = cycleDiagnostics.filter((d) => d.level === "error");
+    cycleDiagnostics = [];
+
+    if (success || errors.length === 0) {
+      // Clear the overlay by sending an empty update batch; Vite's client
+      // will dismiss any existing error when it processes a fresh signal.
+      server.ws.send({ type: "update", updates: [] });
+      return;
+    }
+
+    const head = errors[0];
+    const loc = parseLocStart(head.loc);
+    const summary = errors
+      .map((e) => `[${e.error_code}] ${e.path}:${e.loc}\n  ${e.message}`)
+      .join("\n\n");
+
+    server.ws.send({
+      type: "error",
+      err: {
+        message: `MoonBit build failed with ${errors.length} error(s):\n\n${summary}`,
+        stack: "",
+        plugin: "vite-plugin-moonbit",
+        id: head.path,
+        loc: { file: head.path, line: loc.line, column: loc.column },
+      },
+    });
+  }
+
   function printErrorBuffer() {
     if (errorBuffer.length === 0) return;
 
@@ -447,7 +535,7 @@ export default function moonbitPlugin(
     if (moonProcess) return;
 
     const cwd = projectInfo?.workspaceRoot ?? root;
-    const args = ["build", "--target", target, "--watch"];
+    const args = ["build", "--target", target, "--watch", "--output-json"];
     // moon defaults to debug; pass --release when the plugin is in release mode
     // so the watch output lands where the resolver looks.
     if (mode === "release") args.push("--release");
@@ -460,53 +548,86 @@ export default function moonbitPlugin(
       env: { ...process.env, FORCE_COLOR: "1" }, // Force ANSI colors
     });
 
+    // stdout and stderr `data` events are chunked arbitrarily; keep a
+    // per-stream partial-line buffer so we only parse complete
+    // newline-terminated records (JSON diagnostics must not be split).
+    let stdoutBuf = "";
+    const handleStdoutLine = (line: string) => {
+      if (!line.trim()) return;
+
+      // Collect JSON diagnostics emitted by `--output-json` and surface
+      // them in the Vite error overlay.
+      const diag = tryParseDiagnostic(line);
+      if (diag) {
+        cycleDiagnostics.push(diag);
+        log(`${diag.level} ${diag.path}:${diag.loc}: ${diag.message}`);
+        return;
+      }
+
+      // Detect build start (file watching)
+      if (line.includes("Watching")) {
+        clearErrorBuffer();
+        cycleDiagnostics = [];
+      }
+
+      log(line);
+
+      // Detect build completion
+      if (
+        line.includes("Finished") ||
+        line.includes("Build completed") ||
+        line.includes("moon: ran")
+      ) {
+        clearErrorBuffer();
+        printBuildSuccess();
+        commitDiagnostics(true);
+        triggerHMR();
+      } else if (line.includes("Had errors, waiting")) {
+        commitDiagnostics(false);
+      }
+    };
+
     moonProcess.stdout?.on("data", (data: Buffer) => {
-      const output = data.toString();
-      if (output) {
-        output.split("\n").forEach((line) => {
-          if (!line.trim()) return;
-
-          // Detect build start (file watching)
-          if (line.includes("Watching")) {
-            clearErrorBuffer();
-          }
-
-          log(line);
-
-          // Detect build completion
-          if (
-            line.includes("Finished") ||
-            line.includes("Build completed") ||
-            line.includes("moon: ran")
-          ) {
-            clearErrorBuffer();
-            printBuildSuccess();
-            triggerHMR();
-          }
-        });
+      stdoutBuf += data.toString();
+      let nl;
+      while ((nl = stdoutBuf.indexOf("\n")) !== -1) {
+        const line = stdoutBuf.slice(0, nl);
+        stdoutBuf = stdoutBuf.slice(nl + 1);
+        handleStdoutLine(line);
       }
     });
 
+    let stderrBuf = "";
     moonProcess.stderr?.on("data", (data: Buffer) => {
-      const output = data.toString();
-      if (output) {
+      stderrBuf += data.toString();
+      let nl;
+      while ((nl = stderrBuf.indexOf("\n")) !== -1) {
+        const line = stderrBuf.slice(0, nl);
+        stderrBuf = stderrBuf.slice(nl + 1);
+        if (!line) continue;
         // Print header on first error in this session
         if (errorBuffer.length === 0) {
           console.log("\n\x1b[1;31m--- MoonBit Build Errors ---\x1b[0m\n");
         }
-
-        output.split("\n").forEach((line) => {
-          if (!line) return;
-
-          // Store raw error with ANSI codes
-          errorBuffer.push(line);
-          // Print immediately with preserved colors
-          process.stderr.write(line + "\n");
-        });
+        errorBuffer.push(line);
+        process.stderr.write(line + "\n");
       }
     });
 
+    const flushStreamsOnClose = () => {
+      if (stdoutBuf) {
+        handleStdoutLine(stdoutBuf);
+        stdoutBuf = "";
+      }
+      if (stderrBuf) {
+        errorBuffer.push(stderrBuf);
+        process.stderr.write(stderrBuf + "\n");
+        stderrBuf = "";
+      }
+    };
+
     moonProcess.on("close", (code) => {
+      flushStreamsOnClose();
       log(`moon build process exited with code ${code}`);
       moonProcess = null;
     });

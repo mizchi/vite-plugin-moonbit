@@ -1,0 +1,7 @@
+import {
+  "mizchi/markdown",
+}
+
+options(
+  link: { "js": { "exports": ["parse_markdown"] } },
+)

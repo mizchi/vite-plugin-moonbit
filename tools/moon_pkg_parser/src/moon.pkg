@@ -1,0 +1,7 @@
+import {
+  "moonbitlang/parser/pkg_parser" @pkg,
+}
+
+options(
+  link: { "js": { "format": "esm", "exports": ["parse"] } },
+)
