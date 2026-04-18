@@ -548,65 +548,86 @@ export default function moonbitPlugin(
       env: { ...process.env, FORCE_COLOR: "1" }, // Force ANSI colors
     });
 
+    // stdout and stderr `data` events are chunked arbitrarily; keep a
+    // per-stream partial-line buffer so we only parse complete
+    // newline-terminated records (JSON diagnostics must not be split).
+    let stdoutBuf = "";
+    const handleStdoutLine = (line: string) => {
+      if (!line.trim()) return;
+
+      // Collect JSON diagnostics emitted by `--output-json` and surface
+      // them in the Vite error overlay.
+      const diag = tryParseDiagnostic(line);
+      if (diag) {
+        cycleDiagnostics.push(diag);
+        log(`${diag.level} ${diag.path}:${diag.loc}: ${diag.message}`);
+        return;
+      }
+
+      // Detect build start (file watching)
+      if (line.includes("Watching")) {
+        clearErrorBuffer();
+        cycleDiagnostics = [];
+      }
+
+      log(line);
+
+      // Detect build completion
+      if (
+        line.includes("Finished") ||
+        line.includes("Build completed") ||
+        line.includes("moon: ran")
+      ) {
+        clearErrorBuffer();
+        printBuildSuccess();
+        commitDiagnostics(true);
+        triggerHMR();
+      } else if (line.includes("Had errors, waiting")) {
+        commitDiagnostics(false);
+      }
+    };
+
     moonProcess.stdout?.on("data", (data: Buffer) => {
-      const output = data.toString();
-      if (!output) return;
-      output.split("\n").forEach((line) => {
-        if (!line.trim()) return;
-
-        // Collect JSON diagnostics emitted by `--output-json` and surface
-        // them in the Vite error overlay.
-        const diag = tryParseDiagnostic(line);
-        if (diag) {
-          cycleDiagnostics.push(diag);
-          log(`${diag.level} ${diag.path}:${diag.loc}: ${diag.message}`);
-          return;
-        }
-
-        // Detect build start (file watching)
-        if (line.includes("Watching")) {
-          clearErrorBuffer();
-          cycleDiagnostics = [];
-        }
-
-        log(line);
-
-        // Detect build completion
-        if (
-          line.includes("Finished") ||
-          line.includes("Build completed") ||
-          line.includes("moon: ran")
-        ) {
-          clearErrorBuffer();
-          printBuildSuccess();
-          commitDiagnostics(true);
-          triggerHMR();
-        } else if (line.includes("Had errors, waiting")) {
-          commitDiagnostics(false);
-        }
-      });
+      stdoutBuf += data.toString();
+      let nl;
+      while ((nl = stdoutBuf.indexOf("\n")) !== -1) {
+        const line = stdoutBuf.slice(0, nl);
+        stdoutBuf = stdoutBuf.slice(nl + 1);
+        handleStdoutLine(line);
+      }
     });
 
+    let stderrBuf = "";
     moonProcess.stderr?.on("data", (data: Buffer) => {
-      const output = data.toString();
-      if (output) {
+      stderrBuf += data.toString();
+      let nl;
+      while ((nl = stderrBuf.indexOf("\n")) !== -1) {
+        const line = stderrBuf.slice(0, nl);
+        stderrBuf = stderrBuf.slice(nl + 1);
+        if (!line) continue;
         // Print header on first error in this session
         if (errorBuffer.length === 0) {
           console.log("\n\x1b[1;31m--- MoonBit Build Errors ---\x1b[0m\n");
         }
-
-        output.split("\n").forEach((line) => {
-          if (!line) return;
-
-          // Store raw error with ANSI codes
-          errorBuffer.push(line);
-          // Print immediately with preserved colors
-          process.stderr.write(line + "\n");
-        });
+        errorBuffer.push(line);
+        process.stderr.write(line + "\n");
       }
     });
 
+    const flushStreamsOnClose = () => {
+      if (stdoutBuf) {
+        handleStdoutLine(stdoutBuf);
+        stdoutBuf = "";
+      }
+      if (stderrBuf) {
+        errorBuffer.push(stderrBuf);
+        process.stderr.write(stderrBuf + "\n");
+        stderrBuf = "";
+      }
+    };
+
     moonProcess.on("close", (code) => {
+      flushStreamsOnClose();
       log(`moon build process exited with code ${code}`);
       moonProcess = null;
     });
