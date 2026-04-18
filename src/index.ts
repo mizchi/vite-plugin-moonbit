@@ -525,18 +525,14 @@ export default function moonbitPlugin(
     }
   }
 
+  // Changed build outputs accumulate here between moon build cycles. We flush
+  // only when moon reports "Finished" / "Build completed" via its stdout, to
+  // avoid pushing partially-updated artifacts during rebuilds that take
+  // longer than the fs.watch emit cadence.
   const pendingChanges = new Set<string>();
-  let flushTimer: NodeJS.Timeout | null = null;
 
   function queueChange(filepath: string) {
     pendingChanges.add(filepath);
-    if (flushTimer) return;
-    flushTimer = setTimeout(() => {
-      flushTimer = null;
-      const batch = Array.from(pendingChanges);
-      pendingChanges.clear();
-      flushHMR(batch);
-    }, 50);
   }
 
   function flushHMR(changed: string[]) {
@@ -579,18 +575,11 @@ export default function moonbitPlugin(
   }
 
   function triggerHMR() {
-    // Signal a flush with whatever has accumulated so far; if nothing has,
-    // fall back to invalidating all mbt: modules (for the initial build
-    // where fs.watch may have missed newly-created files).
-    if (pendingChanges.size > 0) {
-      if (flushTimer) clearTimeout(flushTimer);
-      flushTimer = null;
-      const batch = Array.from(pendingChanges);
-      pendingChanges.clear();
-      flushHMR(batch);
-    } else {
-      flushHMR([]);
-    }
+    // Called when moon signals a completed rebuild. Drain whatever fs.watch
+    // has accumulated since the previous cycle.
+    const batch = Array.from(pendingChanges);
+    pendingChanges.clear();
+    flushHMR(batch);
   }
 
   // Watch for changes in the build directory

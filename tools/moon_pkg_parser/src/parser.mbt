@@ -6,12 +6,16 @@
 /// the consumer doesn't have to deal with MoonBit exceptions across the FFI
 /// boundary.
 ///
-/// DSL-specific normalization:
+/// DSL-specific normalization happens in `canonicalize_top_level`:
 /// - `options(...)` keys are flattened to the top level (to match the shape
 ///   of the equivalent `moon.pkg.json`).
 /// - Bareword DSL keys that moon accepts as aliases (snake_case <-> kebab)
 ///   are rewritten to the canonical kebab form, e.g. `supported_targets`
 ///   -> `supported-targets`, `is_main` -> `is-main`.
+/// - If both alias forms appear at the same level, the later one (iteration
+///   order) overwrites the earlier. Top-level keys always override
+///   options-level keys for the same canonical name because top-level is
+///   applied second.
 pub fn parse(src : String) -> String {
   let (ast, reports) = @pkg.parse_string(src)
   if reports.length() > 0 {
@@ -19,26 +23,31 @@ pub fn parse(src : String) -> String {
     let msg_strs = msgs.map(fn(m) { "\"" + escape(m) + "\"" }).join(",")
     "{\"error\":[" + msg_strs + "]}"
   } else {
-    to_plain_json(normalize_keys(flatten_options(ast)))
+    to_plain_json(canonicalize_top_level(ast))
   }
 }
 
 ///|
-/// Rewrite known snake_case top-level keys to their canonical kebab-case form
-/// (matching moon's serde aliases). Other keys (including file paths inside
-/// `targets: { ... }` and members of the `link` object) are left untouched.
-fn normalize_keys(ast : @pkg.Ast) -> @pkg.Ast {
+/// Single pass that flattens `options(...)` and canonicalizes alias keys.
+/// Options contents land in the output first, then top-level keys override
+/// them (both steps apply key canonicalization before writing).
+fn canonicalize_top_level(ast : @pkg.Ast) -> @pkg.Ast {
   match ast {
     Obj(map=m, loc=loc) => {
-      let out : Map[String, @pkg.Ast] = Map::new()
+      let merged : Map[String, @pkg.Ast] = Map::new()
+      match m.get("options") {
+        Some(Obj(map=inner, ..)) =>
+          for kv in inner.iter() {
+            merged[canonical_top_level_key(kv.0)] = kv.1
+          }
+        _ => ()
+      }
       for kv in m.iter() {
-        let canonical = canonical_top_level_key(kv.0)
-        // if a kebab form already exists, keep the explicit one.
-        if !out.contains(canonical) {
-          out[canonical] = kv.1
+        if kv.0 != "options" {
+          merged[canonical_top_level_key(kv.0)] = kv.1
         }
       }
-      @pkg.Ast::Obj(map=out, loc=loc)
+      @pkg.Ast::Obj(map=merged, loc=loc)
     }
     _ => ast
   }
