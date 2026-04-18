@@ -9,6 +9,11 @@ Vite plugin for MoonBit projects. Supports both JS and WASM-GC backends.
 - HMR on file changes
 - JS and WASM-GC backend support
 - MoonBit workspace (`moon.work`) / monorepo support
+- Understands `moon.pkg` / `moon.work` DSL (parsed by a MoonBit-native
+  parser built from `moonbitlang/parser`)
+- `mbt:` imports support `?worker`, `?url`, `?raw` query suffixes
+- Source maps forwarded so `.mbt` sources are debuggable in browser devtools
+- Auto-detects `use-js-builtin-string` from `moon.pkg` for `wasm-gc`
 
 ## Install
 

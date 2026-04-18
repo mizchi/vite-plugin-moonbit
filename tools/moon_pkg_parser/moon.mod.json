@@ -1,0 +1,9 @@
+{
+  "name": "vite-plugin-moonbit/moon_pkg_parser",
+  "version": "0.0.0",
+  "deps": {
+    "moonbitlang/parser": "0.2.5"
+  },
+  "source": "src",
+  "preferred-target": "js"
+}
