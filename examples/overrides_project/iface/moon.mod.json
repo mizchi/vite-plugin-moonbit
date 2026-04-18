@@ -1,0 +1,6 @@
+{
+  "name": "spec/iface",
+  "version": "0.0.1",
+  "source": "src",
+  "preferred-target": "js"
+}

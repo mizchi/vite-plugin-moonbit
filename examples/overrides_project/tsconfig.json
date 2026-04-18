@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "allowJs": true,
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "paths": {
+      "mbt:my/app": [
+        "./_build/js/release/build/my/app/app.js"
+      ]
+    }
+  },
+  "include": [
+    "*.ts"
+  ]
+}

@@ -153,6 +153,23 @@ members = [
 When running in workspace mode, `moon build --watch` is spawned at the
 workspace root so all members are built together into a single `_build/`.
 
+### Virtual / implement / overrides
+
+MoonBit's `moon.pkg.json` supports three fields for swappable implementations:
+
+- `"virtual": { "has-default": bool }` — interface-only package (signatures
+  declared in `pkg.mbti`)
+- `"implement": "user/mod/iface"` — a package that implements the above
+- `"overrides": ["user/mod/impl_x"]` — a main/app package selects which
+  implementation to link
+
+These are resolved entirely by moon's linker; the plugin serves the final
+`.js` output transparently. Virtual and implement-only packages produce only
+`.mi`/`.core` intermediates (no runtime `.js`); trying to `import 'mbt:<virtual>'`
+directly prints a hint pointing to the app package that owns the `overrides`.
+
+See [examples/overrides_project](./examples/overrides_project).
+
 ## License
 
 MIT

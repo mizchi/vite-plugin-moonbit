@@ -33,7 +33,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        example: [js_project, wasm_project, luna_project, monorepo_project]
+        example: [js_project, wasm_project, luna_project, monorepo_project, overrides_project]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
