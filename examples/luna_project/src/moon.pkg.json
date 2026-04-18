@@ -4,14 +4,9 @@
     "js"
   ],
   "import": [
-    "mizchi/luna",
-    {
-      "path": "mizchi/luna/luna/dom/element",
-      "alias": "element"
-    },
-    {
-      "path": "mizchi/js/browser/dom",
-      "alias": "dom"
-    }
+    "mizchi/signals",
+    { "path": "mizchi/luna/js/resource", "alias": "resource" },
+    { "path": "mizchi/luna/dom", "alias": "element" },
+    { "path": "mizchi/js/browser/dom", "alias": "dom" }
   ]
 }

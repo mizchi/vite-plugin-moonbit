@@ -31,8 +31,9 @@ jobs:
   examples:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        example: [js_project, wasm_project, luna_project]
+        example: [js_project, wasm_project, luna_project, monorepo_project]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -60,17 +61,13 @@ jobs:
       - name: Build plugin
         run: pnpm build
 
-      - name: Install mooncakes
-        working-directory: examples/${{ matrix.example }}
-        run: moon install
-
       - name: Install example dependencies
         working-directory: examples/${{ matrix.example }}
         run: pnpm install
 
       - name: Moon build
         working-directory: examples/${{ matrix.example }}
-        run: moon build
+        run: moon build --release
 
       - name: Vite build
         working-directory: examples/${{ matrix.example }}

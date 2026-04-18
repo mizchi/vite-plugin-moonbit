@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import init from './target/wasm-gc/release/build/app.wasm?init';
+import init from './_build/wasm-gc/release/build/app.wasm?init';
 const instance = await init();
 const { add } = instance.exports as { add: (a: number, b: number) => number };
 console.log('WASM module loaded:', instance.exports);
