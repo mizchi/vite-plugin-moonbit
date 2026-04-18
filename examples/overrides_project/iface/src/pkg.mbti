@@ -1,0 +1,4 @@
+package "spec/iface"
+
+// Values
+pub fn greet() -> String

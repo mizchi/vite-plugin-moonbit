@@ -1,0 +1,7 @@
+members = [
+  "./iface",
+  "./impl_a",
+  "./impl_b",
+  "./app",
+]
+preferred_target = "js"

@@ -230,6 +230,34 @@ export default function moonbitPlugin(
     return candidates.find((p) => fs.existsSync(p)) ?? candidates[0];
   }
 
+  /**
+   * If the id refers to a package that moon marked as `virtual` or
+   * `implement`, return a hint string explaining why no .js exists — those
+   * packages only contribute .mi/.core intermediates and are link-absorbed
+   * into whatever package declares `overrides` for them.
+   */
+  function overrideHint(id: string): string | null {
+    if (!projectInfo) return null;
+    const parts = id.slice(MBT_PREFIX.length).split("/");
+    const member = matchMember(parts);
+    if (!member) return null;
+    const pkgParts = parts.slice(member.name.split("/").length);
+    const pkgDir = path.join(member.memberDir, member.source, ...pkgParts);
+    const pkgJson = path.join(pkgDir, "moon.pkg.json");
+    try {
+      const parsed = JSON.parse(fs.readFileSync(pkgJson, "utf-8"));
+      if (parsed.virtual) {
+        return `${id} is a virtual package (declared in ${path.relative(root, pkgJson)}). Virtual packages have no runtime output — import the app/main package that selects an implementation via \`overrides\` instead.`;
+      }
+      if (parsed.implement) {
+        return `${id} is an implementation of \`${parsed.implement}\` (declared in ${path.relative(root, pkgJson)}). Implementations are linked by the app that declares \`overrides\` and do not produce a standalone .js.`;
+      }
+    } catch {
+      // no moon.pkg.json here, fall through
+    }
+    return null;
+  }
+
   function resolveCandidates(id: string): string[] {
     if (!projectInfo) return [];
 
@@ -521,6 +549,8 @@ export default function moonbitPlugin(
         console.error(
           `\x1b[31m[moonbit] Could not resolve: ${id} -> ${resolved || "unknown"}\x1b[0m`
         );
+        const hint = overrideHint(id);
+        if (hint) console.error(`\x1b[33m[moonbit] hint: ${hint}\x1b[0m`);
         return null;
       }
       return null;

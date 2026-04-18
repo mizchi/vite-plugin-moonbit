@@ -1,0 +1,12 @@
+{
+  "import": [
+    { "path": "spec/iface", "alias": "iface" }
+  ],
+  "overrides": ["impls/impl_a"],
+  "link": {
+    "js": {
+      "format": "esm",
+      "exports": ["greet_wrapped"]
+    }
+  }
+}

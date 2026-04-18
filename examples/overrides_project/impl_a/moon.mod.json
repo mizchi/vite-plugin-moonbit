@@ -1,0 +1,9 @@
+{
+  "name": "impls/impl_a",
+  "version": "0.0.1",
+  "deps": {
+    "spec/iface": { "path": "../iface" }
+  },
+  "source": "src",
+  "preferred-target": "js"
+}
