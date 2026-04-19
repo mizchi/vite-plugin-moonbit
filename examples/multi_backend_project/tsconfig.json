@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "allowJs": true,
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "types": ["vite/client"],
+    "paths": {
+      "mbt:my": ["./_build/js/release/build/my.js"],
+      "mbtw:my/heavy": ["./_build/wasm-gc/release/build/heavy/heavy.wasm"]
+    }
+  },
+  "include": ["*.ts"]
+}

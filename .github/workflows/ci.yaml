@@ -41,7 +41,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        example: [js_project, wasm_project, luna_project, monorepo_project, overrides_project]
+        example: [js_project, wasm_project, luna_project, monorepo_project, overrides_project, multi_backend_project]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -76,6 +76,11 @@ jobs:
       - name: Moon build
         working-directory: examples/${{ matrix.example }}
         run: moon build --release
+
+      - name: Moon build (extra target for multi_backend_project)
+        if: matrix.example == 'multi_backend_project'
+        working-directory: examples/${{ matrix.example }}
+        run: moon build --release --target js && moon build --release --target wasm-gc
 
       - name: Vite build
         working-directory: examples/${{ matrix.example }}
