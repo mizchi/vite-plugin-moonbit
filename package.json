@@ -21,6 +21,7 @@
   "scripts": {
     "build:parser": "moon -C tools/moon_pkg_parser build --release --target js",
     "build": "pnpm build:parser && tsdown",
+    "test": "node --test",
     "prepublishOnly": "pnpm build"
   },
   "repository": {

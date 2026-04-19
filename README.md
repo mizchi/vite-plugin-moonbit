@@ -17,6 +17,7 @@ Vite plugin for MoonBit projects. Supports both JS and WASM-GC backends.
 - Mix multiple backends in one project (e.g. JS for the main thread,
   wasm-gc inside a Web Worker) by instantiating the plugin twice with
   distinct `prefix` options
+- Optional TypeScript bridge package generation via `mizchi/ts.mbt`
 
 ## Install
 
@@ -120,6 +121,61 @@ Check out: `npx tiged mizchi/vite-plugin-moonbit/examples/wasm_project myapp`
 | `watch` | `boolean` | `true` (dev) | Run `moon build --watch` |
 | `target` | `'js' \| 'wasm' \| 'wasm-gc'` | `'js'` | Build target |
 | `showLogs` | `boolean` | `true` | Show build logs |
+| `prefix` | `string` | `'mbt:'` | Import prefix for this plugin instance |
+| `tsBridge` | `MoonbitTsBridgeOptions` | `undefined` | Generate MoonBit bridge packages from TS entrypoints before build |
+
+### TypeScript bridge packages
+
+Use `tsBridge` when MoonBit should consume a TypeScript entrypoint through a
+generated typed bridge package.
+
+```ts
+// vite.config.ts
+import { defineConfig } from "vite";
+import moonbit from "vite-plugin-moonbit";
+
+export default defineConfig({
+  plugins: [
+    moonbit({
+      root: "./moonbit-app",
+      tsBridge: {
+        generatorRoot: "../ts.mbt",
+        entries: [
+          {
+            entry: "./src/api/client.ts",
+            moduleSpec: "/src/api/client.ts",
+            outDir: "src/gen/client_bridge",
+          },
+        ],
+      },
+    }),
+  ],
+});
+```
+
+This runs:
+
+```bash
+moon -C ../ts.mbt run src -- emit-moonbit-bridge-package \
+  /abs/path/to/src/api/client.ts \
+  /src/api/client.ts \
+  /abs/path/to/moonbit-app/src/gen/client_bridge
+```
+
+The generated package contains:
+
+- `moon.pkg.json`
+- `bridge.mbti`
+- `bridge.mbt`
+- `bridge.js`
+
+When a MoonBit package imports the generated bridge package, the plugin reads
+that package's `bridge.js` exports and injects the needed bindings into the
+compiled MoonBit JS module automatically.
+
+See [examples/ts_bridge_project](./examples/ts_bridge_project) for a complete
+example that checks in the generated bridge package and wraps a TypeScript
+entrypoint from MoonBit.
 
 ## Path Resolution
 

@@ -1,0 +1,33 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { defineConfig } from "vite";
+import moonbit from "vite-plugin-moonbit";
+
+const generatorRoot = path.resolve(__dirname, "../../../ts.mbt");
+const hasGenerator = existsSync(path.join(generatorRoot, "moon.mod.json"));
+
+export default defineConfig({
+  root: __dirname,
+  plugins: [
+    moonbit({
+      root: __dirname,
+      watch: true,
+      showLogs: true,
+      tsBridge: hasGenerator
+        ? {
+            generatorRoot,
+            entries: [
+              {
+                entry: "./src/api/math.ts",
+                moduleSpec: "/src/api/math.ts",
+                outDir: "src/gen/math_bridge",
+              },
+            ],
+          }
+        : undefined,
+    }),
+  ],
+  server: {
+    port: 3456,
+  },
+});
