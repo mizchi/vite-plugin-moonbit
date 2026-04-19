@@ -76,6 +76,9 @@ export interface MoonbitTsBridgeEntry {
 
   /**
    * Runtime module specifier imported by the generated `bridge.js`.
+   * Prefer non-relative specifiers like `/src/api/client.ts`, `node:fs`, or a
+   * bare package name. Relative specs still work, but they prevent the
+   * generator from using some direct `#module("...")` MoonBit externs.
    */
   moduleSpec: string;
 

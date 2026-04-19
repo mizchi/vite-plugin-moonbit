@@ -44,3 +44,9 @@ moon -C ../../../ts.mbt run src -- emit-moonbit-bridge-package \
   /src/api/math.ts \
   "$PWD/src/gen/math_bridge"
 ```
+
+The second argument is the runtime `moduleSpec`. Keep it non-relative if you
+can. `/src/api/math.ts` is better than `./src/api/math.ts` here, because
+non-relative specs let the generator emit smaller MoonBit FFI with fewer
+wrapper bindings. Relative specs still work, but they fall back to more
+generated `bridge.js` glue.

@@ -153,6 +153,13 @@ export default defineConfig({
 });
 ```
 
+Use a non-relative `moduleSpec` whenever possible, for example
+`/src/api/client.ts`, `node:fs`, or a bare package name. The generator can emit
+leaner MoonBit FFI for non-relative specifiers. Relative specs like
+`./client.ts` still work, but they force more bindings through generated
+`bridge.js` wrappers because MoonBit `#module("...")` does not currently accept
+relative module paths.
+
 This runs:
 
 ```bash
@@ -175,6 +182,12 @@ imports that bridge package remains hand-written.
 When a MoonBit package imports the generated bridge package, the plugin reads
 that package's `bridge.js` exports and injects the needed bindings into the
 compiled MoonBit JS module automatically.
+
+Today `bridge.js` is still needed for some surfaces even with a non-relative
+`moduleSpec`, especially static class members, value exports, and namespace-like
+exports. Plain exported functions, instance members, and class constructors are
+already emitted with less wrapper code when direct `#module("...")` imports are
+available.
 
 See [examples/ts_bridge_project](./examples/ts_bridge_project) for a complete
 example that checks in the generated bridge package and wraps a TypeScript
