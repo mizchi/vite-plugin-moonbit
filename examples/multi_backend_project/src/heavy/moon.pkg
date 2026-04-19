@@ -1,0 +1,5 @@
+supported_targets = "wasm-gc"
+
+options(
+  link: { "wasm-gc": { "exports": ["fibonacci"] } },
+)

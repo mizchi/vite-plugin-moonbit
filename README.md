@@ -14,6 +14,9 @@ Vite plugin for MoonBit projects. Supports both JS and WASM-GC backends.
 - `mbt:` imports support `?worker`, `?url`, `?raw` query suffixes
 - Source maps forwarded so `.mbt` sources are debuggable in browser devtools
 - Auto-detects `use-js-builtin-string` from `moon.pkg` for `wasm-gc`
+- Mix multiple backends in one project (e.g. JS for the main thread,
+  wasm-gc inside a Web Worker) by instantiating the plugin twice with
+  distinct `prefix` options
 
 ## Install
 
@@ -174,6 +177,39 @@ These are resolved entirely by moon's linker; the plugin serves the final
 directly prints a hint pointing to the app package that owns the `overrides`.
 
 See [examples/overrides_project](./examples/overrides_project).
+
+### Multiple backends in one project
+
+Instantiate the plugin per backend with a unique `prefix`:
+
+```ts
+// vite.config.ts
+const plugins = [
+  moonbit({ target: 'js' }),                        // mbt:*
+  moonbit({ target: 'wasm-gc', prefix: 'mbtw:' }),  // mbtw:*
+];
+export default defineConfig({
+  plugins,
+  worker: {
+    format: 'es',
+    plugins: () => [
+      moonbit({ target: 'wasm-gc', prefix: 'mbtw:', watch: false }),
+    ],
+  },
+});
+```
+
+```ts
+// main.ts — runs on JS backend
+import { greet } from 'mbt:my';
+
+// worker.ts — runs as a Web Worker using the wasm-gc backend
+import init from 'mbtw:my/heavy';
+```
+
+See [examples/multi_backend_project](./examples/multi_backend_project) for a
+complete setup that offloads CPU-heavy work to a Wasm-GC worker while the
+main thread stays on the JS backend.
 
 ## License
 

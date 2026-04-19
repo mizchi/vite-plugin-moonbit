@@ -45,6 +45,21 @@ export interface MoonbitPluginOptions {
    * @default auto-detected from moon.pkg files
    */
   useJsBuiltinString?: boolean;
+
+  /**
+   * Import prefix used to identify MoonBit modules. Change this when loading
+   * the plugin more than once in a single project to mix multiple backends:
+   *
+   *     plugins: [
+   *       moonbit({ target: "js" }),                       // mbt:foo
+   *       moonbit({ target: "wasm-gc", prefix: "mbtw:" }), // mbtw:foo
+   *     ]
+   *
+   * The prefix must end with `":"`.
+   *
+   * @default "mbt:"
+   */
+  prefix?: string;
 }
 
 interface Member {
@@ -59,8 +74,6 @@ interface ProjectInfo {
   isWorkspace: boolean;
 }
 
-const MBT_PREFIX = "mbt:";
-const VIRTUAL_MODULE_PREFIX = "\0mbt:";
 const MOON_WORK_FILES = ["moon.work", "moon.work.json"];
 
 export default function moonbitPlugin(
@@ -72,7 +85,15 @@ export default function moonbitPlugin(
     mode = "release",
     target = "js",
     showLogs = true,
+    prefix = "mbt:",
   } = options;
+  if (!prefix.endsWith(":")) {
+    throw new Error(
+      `[vite-plugin-moonbit] "prefix" must end with ":" (got ${JSON.stringify(prefix)})`
+    );
+  }
+  const MBT_PREFIX = prefix;
+  const VIRTUAL_MODULE_PREFIX = "\0" + prefix;
 
   let config: ResolvedConfig;
   let server: ViteDevServer | null = null;
@@ -742,14 +763,16 @@ export default function moonbitPlugin(
   }
 
   return {
-    name: "vite-plugin-moonbit",
+    // Use the (prefix, target) pair so multiple instances in one project
+    // don't clash in Vite's plugin-de-dup diagnostics.
+    name: `vite-plugin-moonbit:${MBT_PREFIX.slice(0, -1)}:${target}`,
     enforce: "pre",
 
     config() {
       return {
         optimizeDeps: {
-          // Exclude mbt: imports from dependency pre-bundling
-          exclude: ["mbt:*"],
+          // Exclude our prefix from dependency pre-bundling
+          exclude: [`${MBT_PREFIX}*`],
         },
         resolve: {
           // Allow mbt: as external prefix
