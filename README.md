@@ -35,7 +35,7 @@ export default defineConfig({
     moonbit({
       target: "js",
       // run: `moon build --target js --watch` in vite
-      // If you want to bulid manually, set `false` and `moon build`
+      // If you want to build manually, set `false` and `moon build`
       watch: true
     })
   ],
@@ -168,6 +168,9 @@ The generated package contains:
 - `bridge.mbti`
 - `bridge.mbt`
 - `bridge.js`
+
+Everything inside `outDir` is generated. The surrounding MoonBit package that
+imports that bridge package remains hand-written.
 
 When a MoonBit package imports the generated bridge package, the plugin reads
 that package's `bridge.js` exports and injects the needed bindings into the
