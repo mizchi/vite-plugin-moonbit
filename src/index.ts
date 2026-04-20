@@ -184,6 +184,7 @@ export default function moonbitPlugin(
   let didWarnMissingNormalizedDtsGenerator = false;
   let didLogMissingNormalizedDtsBuildDir = false;
   let didLogMissingNormalizedDtsFiles = false;
+  let didLogNormalizedDtsGeneratorInfo = false;
 
   const fileExt = target === "js" ? ".js" : ".wasm";
 
@@ -928,6 +929,12 @@ export default function moonbitPlugin(
     didLogMissingNormalizedDtsBuildDir = false;
     didLogMissingNormalizedDtsFiles = false;
     const command = resolveNormalizedDtsCommand();
+    if (!didLogNormalizedDtsGeneratorInfo) {
+      log(
+        `normalizedDts will use generatorRoot ${generatorRoot} (command: ${command})`
+      );
+      didLogNormalizedDtsGeneratorInfo = true;
+    }
     log(
       `Normalizing MoonBit declarations (${reason}): ${declarationFiles.length} file(s)`
     );

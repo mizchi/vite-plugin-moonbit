@@ -208,7 +208,14 @@ Use `normalizedDts` when you want the plugin to post-process MoonBit-generated
 
 This integration is experimental. It rewrites generated declaration files
 in-place after MoonBit build output appears, and the exact normalization rules
-may still change.
+may still change. This post-process only runs on the Vite plugin path. If your
+workflow calls `moon build` directly, run the normalizer explicitly after build:
+
+```bash
+moon -C ../ts.mbt run src -- normalize-moonbit-dts \
+  /abs/path/to/_build/js/release/build/app.d.ts \
+  /abs/path/to/_build/js/release/build/app.d.ts
+```
 
 ```ts
 moonbit({
@@ -234,14 +241,6 @@ Today the normalizer is intentionally narrow. It mainly rewrites the
 MoonBit-generated namespace alias layer into clearer primitives and named type
 imports. Treat it as a readability pass for MoonBit output, not a general
 purpose `.d.ts` pretty-printer.
-
-This runs, for each generated declaration file except `moonbit.d.ts`:
-
-```bash
-moon -C ../ts.mbt run src -- normalize-moonbit-dts \
-  /abs/path/to/_build/js/release/build/app.d.ts \
-  /abs/path/to/_build/js/release/build/app.d.ts
-```
 
 When `normalizedDts` is enabled but skipped, the plugin now logs why:
 

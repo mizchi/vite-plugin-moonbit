@@ -93,7 +93,7 @@ test("normalizedDts rewrites generated declaration files in place", () => {
       "expected the raw MoonBit-generated declaration before normalization",
     );
 
-    runWithEnv(
+    const viteBuild = runWithEnv(
       "pnpm",
       ["exec", "vite", "build", "--config", "examples/ts_bridge_project/vite.config.ts"],
       repoRoot,
@@ -103,6 +103,13 @@ test("normalizedDts rewrites generated declaration files in place", () => {
         TS_MBT_GENERATOR_COMMAND: fakeGenerator.commandPath,
         TS_MBT_ENABLE_NORMALIZED_DTS: "1",
       },
+    );
+
+    assert.match(
+      viteBuild.stdout,
+      new RegExp(
+        `normalizedDts will use generatorRoot ${fakeGenerator.root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+      ),
     );
 
     const loggedArgs = fs.readFileSync(fakeGenerator.logPath, "utf-8").trim().split("\n");

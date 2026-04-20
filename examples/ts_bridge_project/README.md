@@ -43,7 +43,9 @@ If you also have a local `mizchi/ts.mbt` checkout, `vite.config.ts` enables
 The same `vite.config.ts` also accepts the experimental `normalizedDts`
 integration through an environment flag. When enabled, the plugin rewrites
 MoonBit-generated `_build/.../*.d.ts` files in place after each build so the
-published TypeScript surface is easier to read.
+published TypeScript surface is easier to read. This only happens on the Vite
+plugin path. If you run `moon build` directly, run the normalizer yourself
+after build.
 
 ```bash
 TS_MBT_ENABLE_NORMALIZED_DTS=1 \
@@ -55,6 +57,14 @@ It reuses the same `generatorRoot` and `command` as `tsBridge`, so the config
 can stay as `normalizedDts: {}`. It is useful when your editor or downstream
 TypeScript project should see `number` / `string` instead of
 `MoonBit.Double` / `MoonBit.String` in the generated declarations.
+
+To normalize generated declarations manually:
+
+```bash
+moon -C ../../../ts.mbt run src -- normalize-moonbit-dts \
+  "$PWD/_build/js/release/build/app.d.ts" \
+  "$PWD/_build/js/release/build/app.d.ts"
+```
 
 To regenerate the bridge package manually:
 
