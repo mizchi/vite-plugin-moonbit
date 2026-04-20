@@ -36,12 +36,15 @@ jobs:
       - name: Build plugin
         run: pnpm build
 
+      - name: Run tests
+        run: pnpm test
+
   examples:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        example: [js_project, wasm_project, luna_project, monorepo_project, overrides_project, multi_backend_project]
+        example: [js_project, wasm_project, luna_project, monorepo_project, overrides_project, multi_backend_project, ts_bridge_project]
     steps:
       - name: Checkout
         uses: actions/checkout@v4

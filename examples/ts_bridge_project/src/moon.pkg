@@ -1,0 +1,7 @@
+import {
+  "internal/app/gen/math_bridge",
+}
+
+options(
+  link: { "js": { "exports": ["describe_scaled_point"] } },
+)

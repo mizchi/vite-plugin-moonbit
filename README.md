@@ -17,6 +17,7 @@ Vite plugin for MoonBit projects. Supports both JS and WASM-GC backends.
 - Mix multiple backends in one project (e.g. JS for the main thread,
   wasm-gc inside a Web Worker) by instantiating the plugin twice with
   distinct `prefix` options
+- Optional TypeScript bridge package generation via `mizchi/ts.mbt`
 
 ## Install
 
@@ -34,7 +35,7 @@ export default defineConfig({
     moonbit({
       target: "js",
       // run: `moon build --target js --watch` in vite
-      // If you want to bulid manually, set `false` and `moon build`
+      // If you want to build manually, set `false` and `moon build`
       watch: true
     })
   ],
@@ -120,6 +121,83 @@ Check out: `npx tiged mizchi/vite-plugin-moonbit/examples/wasm_project myapp`
 | `watch` | `boolean` | `true` (dev) | Run `moon build --watch` |
 | `target` | `'js' \| 'wasm' \| 'wasm-gc'` | `'js'` | Build target |
 | `showLogs` | `boolean` | `true` | Show build logs |
+| `prefix` | `string` | `'mbt:'` | Import prefix for this plugin instance |
+| `tsBridge` | `MoonbitTsBridgeOptions` | `undefined` | Experimental: generate MoonBit bridge packages from TS entrypoints before build |
+
+### Experimental TypeScript bridge packages
+
+Use `tsBridge` when MoonBit should consume a TypeScript entrypoint through a
+generated typed bridge package.
+
+This integration is still experimental. The `tsBridge` option shape, generated
+MoonBit surface, and the amount of emitted `bridge.js` glue may still change as
+MoonBit and `mizchi/ts.mbt` backend constraints are worked through.
+
+```ts
+// vite.config.ts
+import { defineConfig } from "vite";
+import moonbit from "vite-plugin-moonbit";
+
+export default defineConfig({
+  plugins: [
+    moonbit({
+      root: "./moonbit-app",
+      tsBridge: {
+        generatorRoot: "../ts.mbt",
+        entries: ["./src/api/client.ts"],
+      },
+    }),
+  ],
+});
+```
+
+For the string shorthand above, the plugin infers:
+
+- `moduleSpec`: `"/src/api/client.ts"`
+- `outDir`: `"src/gen/client_bridge"`
+
+You can still pass the full object form when you need to override either of
+those defaults.
+
+Use a non-relative `moduleSpec` whenever possible, for example
+`/src/api/client.ts`, `node:fs`, or a bare package name. The generator can emit
+leaner MoonBit FFI for non-relative specifiers. Relative specs like
+`./client.ts` still work, but they force more bindings through generated
+`bridge.js` wrappers because MoonBit `#module("...")` does not currently accept
+relative module paths.
+
+This runs:
+
+```bash
+moon -C ../ts.mbt run src -- emit-moonbit-bridge-package \
+  /abs/path/to/src/api/client.ts \
+  /src/api/client.ts \
+  /abs/path/to/moonbit-app/src/gen/client_bridge
+```
+
+The generated package contains:
+
+- `moon.pkg.json`
+- `bridge.mbti`
+- `bridge.mbt`
+- `bridge.js`
+
+Everything inside `outDir` is generated. The surrounding MoonBit package that
+imports that bridge package remains hand-written.
+
+When a MoonBit package imports the generated bridge package, the plugin reads
+that package's `bridge.js` exports and injects the needed bindings into the
+compiled MoonBit JS module automatically.
+
+Today `bridge.js` is still needed for some surfaces even with a non-relative
+`moduleSpec`, especially static class members, value exports, and namespace-like
+exports. Plain exported functions, instance members, and class constructors are
+already emitted with less wrapper code when direct `#module("...")` imports are
+available.
+
+See [examples/ts_bridge_project](./examples/ts_bridge_project) for a complete
+example that checks in the generated bridge package and wraps a TypeScript
+entrypoint from MoonBit.
 
 ## Path Resolution
 

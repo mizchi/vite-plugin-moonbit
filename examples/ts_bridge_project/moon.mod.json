@@ -1,0 +1,9 @@
+{
+  "name": "internal/app",
+  "version": "0.0.1",
+  "deps": {
+    "mizchi/js": "0.10.16"
+  },
+  "source": "src",
+  "preferred-target": "js"
+}
