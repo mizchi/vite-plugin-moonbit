@@ -122,12 +122,16 @@ Check out: `npx tiged mizchi/vite-plugin-moonbit/examples/wasm_project myapp`
 | `target` | `'js' \| 'wasm' \| 'wasm-gc'` | `'js'` | Build target |
 | `showLogs` | `boolean` | `true` | Show build logs |
 | `prefix` | `string` | `'mbt:'` | Import prefix for this plugin instance |
-| `tsBridge` | `MoonbitTsBridgeOptions` | `undefined` | Generate MoonBit bridge packages from TS entrypoints before build |
+| `tsBridge` | `MoonbitTsBridgeOptions` | `undefined` | Experimental: generate MoonBit bridge packages from TS entrypoints before build |
 
-### TypeScript bridge packages
+### Experimental TypeScript bridge packages
 
 Use `tsBridge` when MoonBit should consume a TypeScript entrypoint through a
 generated typed bridge package.
+
+This integration is still experimental. The `tsBridge` option shape, generated
+MoonBit surface, and the amount of emitted `bridge.js` glue may still change as
+MoonBit and `mizchi/ts.mbt` backend constraints are worked through.
 
 ```ts
 // vite.config.ts

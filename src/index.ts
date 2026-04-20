@@ -47,8 +47,9 @@ export interface MoonbitPluginOptions {
   useJsBuiltinString?: boolean;
 
   /**
-   * Generate MoonBit bridge packages from TypeScript entrypoints before
-   * starting `moon build`. The generator is provided by `mizchi/ts.mbt`.
+   * Experimental: generate MoonBit bridge packages from TypeScript entrypoints
+   * before starting `moon build`. The generator is provided by `mizchi/ts.mbt`.
+   * The API and generated surface may still change between releases.
    */
   tsBridge?: MoonbitTsBridgeOptions;
 
@@ -103,7 +104,7 @@ export interface MoonbitTsBridgeOptions {
   command?: string;
 
   /**
-   * Bridge package generation specs.
+   * Experimental bridge package generation specs.
    */
   entries: MoonbitTsBridgeEntry[];
 }

@@ -1,5 +1,9 @@
 ## vite-plugin-moonbit TypeScript bridge example
 
+This example uses the current experimental `tsBridge` flow. The generated
+package shape is already usable, but the API and emitted glue are still subject
+to change while the integration is being hardened.
+
 ```bash
 $ npx tiged github:mizchi/vite-plugin-moonbit/examples/ts_bridge_project myapp
 $ cd myapp
