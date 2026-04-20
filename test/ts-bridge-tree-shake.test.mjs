@@ -87,6 +87,7 @@ test("ts bridge example keeps bridge bindings tree-shake friendly", () => {
   const fakeGenerator = createFakeTsBridgeGenerator();
   try {
     run("pnpm", ["build"], repoRoot);
+    run("moon", ["build", "--release"], exampleDir);
     runWithEnv(
       "pnpm",
       ["exec", "vite", "build", "--config", "examples/ts_bridge_project/vite.config.ts"],
