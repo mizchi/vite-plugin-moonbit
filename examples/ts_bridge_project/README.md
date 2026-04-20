@@ -50,3 +50,17 @@ can. `/src/api/math.ts` is better than `./src/api/math.ts` here, because
 non-relative specs let the generator emit smaller MoonBit FFI with fewer
 wrapper bindings. Relative specs still work, but they fall back to more
 generated `bridge.js` glue.
+
+In the checked-in `vite.config.ts`, this is now the shorthand form:
+
+```ts
+tsBridge: {
+  generatorRoot,
+  entries: ["./src/api/math.ts"],
+}
+```
+
+That infers:
+
+- `moduleSpec`: `/src/api/math.ts`
+- `outDir`: `src/gen/math_bridge`

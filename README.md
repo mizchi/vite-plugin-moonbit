@@ -140,18 +140,20 @@ export default defineConfig({
       root: "./moonbit-app",
       tsBridge: {
         generatorRoot: "../ts.mbt",
-        entries: [
-          {
-            entry: "./src/api/client.ts",
-            moduleSpec: "/src/api/client.ts",
-            outDir: "src/gen/client_bridge",
-          },
-        ],
+        entries: ["./src/api/client.ts"],
       },
     }),
   ],
 });
 ```
+
+For the string shorthand above, the plugin infers:
+
+- `moduleSpec`: `"/src/api/client.ts"`
+- `outDir`: `"src/gen/client_bridge"`
+
+You can still pass the full object form when you need to override either of
+those defaults.
 
 Use a non-relative `moduleSpec` whenever possible, for example
 `/src/api/client.ts`, `node:fs`, or a bare package name. The generator can emit

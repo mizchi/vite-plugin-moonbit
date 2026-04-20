@@ -2,11 +2,20 @@
 
 // Load the generated bridge JS before calling these externs.
 
+// Requires mizchi/js (alias @js) for @js.Any in widened signatures.
+
 pub struct Point {
   x : Double
   y : Double
 }
 
-pub extern "js" fn scale_point(x : Double, y : Double, factor : Double) -> Point = "__ts_mbt_scale_point"
+#module("/src/api/math.ts")
+pub extern "js" fn scale_point(x : Double, y : Double, factor : Double) -> Point = "scalePoint"
 
-pub extern "js" fn format_point(point : Point) -> String = "__ts_mbt_format_point"
+#module("/src/api/math.ts")
+pub extern "js" fn format_point(point : Point) -> String = "formatPoint"
+
+#module("/src/api/math.ts")
+pub extern "js" fn unused_bridge_sentinel() -> String = "unusedBridgeSentinel"
+
+pub extern "js" fn get_point_kind() -> @js.Any = "__ts_mbt_get_point_kind"

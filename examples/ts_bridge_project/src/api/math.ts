@@ -3,6 +3,8 @@ export interface Point {
   y: number;
 }
 
+export const pointKind: string = "cartesian";
+
 export function scalePoint(x: number, y: number, factor: number): Point {
   return {
     x: x * factor,

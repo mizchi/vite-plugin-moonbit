@@ -13,3 +13,6 @@ declare pub fn scalePoint(x : Double, y : Double, factor : Double) -> Point
 
 ///|
 declare pub fn formatPoint(point : Point) -> String
+
+///|
+declare pub fn unusedBridgeSentinel() -> String

@@ -68,7 +68,7 @@ export interface MoonbitPluginOptions {
   prefix?: string;
 }
 
-export interface MoonbitTsBridgeEntry {
+export interface MoonbitTsBridgeEntrySpec {
   /**
    * TypeScript / TSX / declaration entrypoint. Resolved relative to the Vite root.
    */
@@ -87,6 +87,8 @@ export interface MoonbitTsBridgeEntry {
    */
   outDir: string;
 }
+
+export type MoonbitTsBridgeEntry = string | (Partial<MoonbitTsBridgeEntrySpec> & Pick<MoonbitTsBridgeEntrySpec, "entry">);
 
 export interface MoonbitTsBridgeOptions {
   /**
@@ -176,11 +178,34 @@ export default function moonbitPlugin(
   function resolveTsBridgeEntries(): ResolvedMoonbitTsBridgeEntry[] {
     const tsBridge = options.tsBridge;
     if (!tsBridge) return [];
-    return tsBridge.entries.map((entry) => ({
-      entry: resolveConfigPath(entry.entry),
-      moduleSpec: entry.moduleSpec,
-      outDir: resolveMoonbitPath(entry.outDir),
-    }));
+    return tsBridge.entries.map((entrySpec) => {
+      const normalized =
+        typeof entrySpec === "string" ? { entry: entrySpec } : entrySpec;
+      const entry = resolveConfigPath(normalized.entry);
+      const relativeEntry = path
+        .relative(config?.root ?? root, entry)
+        .replace(/\\/g, "/");
+      const entryNoPrefix = relativeEntry.startsWith("./")
+        ? relativeEntry.slice(2)
+        : relativeEntry;
+      const moduleSpec =
+        normalized.moduleSpec ?? `/${entryNoPrefix.replace(/^\/+/, "")}`;
+
+      let inferredOutDir = "";
+      const parsed = path.posix.parse(entryNoPrefix);
+      const parts = entryNoPrefix.split("/").filter(Boolean);
+      if (parts.length <= 1) {
+        inferredOutDir = path.posix.join("gen", `${parsed.name}_bridge`);
+      } else {
+        inferredOutDir = path.posix.join(parts[0], "gen", `${parsed.name}_bridge`);
+      }
+
+      return {
+        entry,
+        moduleSpec,
+        outDir: resolveMoonbitPath(normalized.outDir ?? inferredOutDir),
+      };
+    });
   }
 
   function resolveTsBridgeGeneratorRoot(): string | null {
@@ -500,13 +525,36 @@ export default function moonbitPlugin(
     } catch {
       return [];
     }
-    const names: string[] = [];
-    const re = /^export const ([A-Za-z_$][\w$]*)\s*=/gm;
+    const names = new Set<string>();
+    const constRe = /^export const ([A-Za-z_$][\w$]*)\s*=/gm;
+    const fnRe = /^export function ([A-Za-z_$][\w$]*)\s*\(/gm;
     let match: RegExpExecArray | null;
-    while ((match = re.exec(content))) {
-      names.push(match[1]);
+    while ((match = constRe.exec(content))) {
+      names.add(match[1]);
     }
-    return names;
+    while ((match = fnRe.exec(content))) {
+      names.add(match[1]);
+    }
+    const reexportRe = /^export\s*\{\s*([^}]+)\s*\}\s*from\s*["'][^"']+["'];?/gm;
+    while ((match = reexportRe.exec(content))) {
+      const specifiers = match[1].split(",");
+      for (const specifier of specifiers) {
+        const normalized = specifier.trim().replace(/\s+/g, " ");
+        if (!normalized) continue;
+        const asMatch = normalized.match(
+          /^(?:default|[A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/,
+        );
+        if (asMatch) {
+          names.add(asMatch[1]);
+          continue;
+        }
+        const plainMatch = normalized.match(/^([A-Za-z_$][\w$]*)$/);
+        if (plainMatch) {
+          names.add(plainMatch[1]);
+        }
+      }
+    }
+    return [...names];
   }
 
   function renderBridgeImportPrelude(id: string): string {
