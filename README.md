@@ -123,6 +123,7 @@ Check out: `npx tiged mizchi/vite-plugin-moonbit/examples/wasm_project myapp`
 | `showLogs` | `boolean` | `true` | Show build logs |
 | `prefix` | `string` | `'mbt:'` | Import prefix for this plugin instance |
 | `tsBridge` | `MoonbitTsBridgeOptions` | `undefined` | Experimental: generate MoonBit bridge packages from TS entrypoints before build |
+| `normalizedDts` | `MoonbitNormalizedDtsOptions` | `undefined` | Experimental: rewrite MoonBit-generated `_build/.../*.d.ts` with clearer TS declarations |
 
 ### Experimental TypeScript bridge packages
 
@@ -198,6 +199,32 @@ available.
 See [examples/ts_bridge_project](./examples/ts_bridge_project) for a complete
 example that checks in the generated bridge package and wraps a TypeScript
 entrypoint from MoonBit.
+
+### Experimental normalized `.d.ts`
+
+Use `normalizedDts` when you want the plugin to post-process MoonBit-generated
+`_build/.../*.d.ts` files with `mizchi/ts.mbt` and replace `MoonBit.Double`,
+`MoonBit.String`, and similar aliases with clearer TypeScript surface types.
+
+This integration is experimental. It rewrites generated declaration files
+in-place after MoonBit build output appears, and the exact normalization rules
+may still change.
+
+```ts
+moonbit({
+  normalizedDts: {
+    generatorRoot: "../ts.mbt",
+  },
+})
+```
+
+This runs, for each generated declaration file except `moonbit.d.ts`:
+
+```bash
+moon -C ../ts.mbt run src -- normalize-moonbit-dts \
+  /abs/path/to/_build/js/release/build/app.d.ts \
+  /abs/path/to/_build/js/release/build/app.d.ts
+```
 
 ## Path Resolution
 
