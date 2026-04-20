@@ -118,12 +118,15 @@ export interface MoonbitTsBridgeOptions {
 
 export interface MoonbitNormalizedDtsOptions {
   /**
-   * Path to the `mizchi/ts.mbt` checkout. Resolved relative to the Vite root.
+   * Optional path to the `mizchi/ts.mbt` checkout. Resolved relative to the
+   * Vite root. When omitted, `tsBridge.generatorRoot` is reused if available.
    */
-  generatorRoot: string;
+  generatorRoot?: string;
 
   /**
-   * Command used to invoke the generator.
+   * Optional command used to invoke the generator.
+   * When omitted, `tsBridge.command` is reused if available.
+   *
    * @default "moon"
    */
   command?: string;
@@ -176,7 +179,11 @@ export default function moonbitPlugin(
   let logBuffer: string[] = [];
   let errorBuffer: string[] = [];
   let didGenerateTsBridges = false;
+  let didNormalizeDtsAtStartup = false;
   let tsBridgeWatcherRegistered = false;
+  let didWarnMissingNormalizedDtsGenerator = false;
+  let didLogMissingNormalizedDtsBuildDir = false;
+  let didLogMissingNormalizedDtsFiles = false;
 
   const fileExt = target === "js" ? ".js" : ".wasm";
 
@@ -238,7 +245,23 @@ export default function moonbitPlugin(
   function resolveNormalizedDtsGeneratorRoot(): string | null {
     const normalizedDts = options.normalizedDts;
     if (!normalizedDts) return null;
-    return resolveConfigPath(normalizedDts.generatorRoot);
+    if (normalizedDts.generatorRoot) {
+      return resolveConfigPath(normalizedDts.generatorRoot);
+    }
+    const tsBridge = options.tsBridge;
+    if (tsBridge?.generatorRoot) {
+      return resolveConfigPath(tsBridge.generatorRoot);
+    }
+    return null;
+  }
+
+  function resolveNormalizedDtsCommand(): string {
+    const normalizedDts = options.normalizedDts;
+    if (!normalizedDts) return "moon";
+    if (normalizedDts.command) return normalizedDts.command;
+    const tsBridge = options.tsBridge;
+    if (tsBridge?.command) return tsBridge.command;
+    return "moon";
   }
 
   function isMoonbitGeneratedDeclarationFile(filepath: string): boolean {
@@ -867,17 +890,44 @@ export default function moonbitPlugin(
     runTsBridgeGeneration(reason);
   }
 
-  function runNormalizedDtsGeneration(reason: string) {
+  function runNormalizedDtsGeneration(reason: string): boolean {
     const normalizedDts = options.normalizedDts;
-    if (!normalizedDts) return;
+    if (!normalizedDts) return false;
     const generatorRoot = resolveNormalizedDtsGeneratorRoot();
-    if (!generatorRoot) return;
+    if (!generatorRoot) {
+      if (!didWarnMissingNormalizedDtsGenerator) {
+        log(
+          "normalizedDts is enabled but no generatorRoot is configured. Set normalizedDts.generatorRoot or reuse tsBridge.generatorRoot.",
+          "warn",
+        );
+        didWarnMissingNormalizedDtsGenerator = true;
+      }
+      return false;
+    }
     const buildDir = getBuildDir();
-    if (!fs.existsSync(buildDir)) return;
+    if (!fs.existsSync(buildDir)) {
+      if (!didLogMissingNormalizedDtsBuildDir) {
+        log(
+          `Skipping normalized .d.ts generation (${reason}): build directory does not exist yet (${path.relative(root, buildDir)})`
+        );
+        didLogMissingNormalizedDtsBuildDir = true;
+      }
+      return false;
+    }
     const declarationFiles = collectBuildDeclarationFiles(buildDir);
-    if (declarationFiles.length === 0) return;
+    if (declarationFiles.length === 0) {
+      if (!didLogMissingNormalizedDtsFiles) {
+        log(
+          `Skipping normalized .d.ts generation (${reason}): no declaration files found under ${path.relative(root, buildDir)}`
+        );
+        didLogMissingNormalizedDtsFiles = true;
+      }
+      return false;
+    }
 
-    const command = normalizedDts.command ?? "moon";
+    didLogMissingNormalizedDtsBuildDir = false;
+    didLogMissingNormalizedDtsFiles = false;
+    const command = resolveNormalizedDtsCommand();
     log(
       `Normalizing MoonBit declarations (${reason}): ${declarationFiles.length} file(s)`
     );
@@ -907,11 +957,12 @@ export default function moonbitPlugin(
         console.log(result.stdout.trim());
       }
     }
+    return true;
   }
 
-  function ensureNormalizedDtsGeneration(reason: string) {
-    if (!options.normalizedDts) return;
-    runNormalizedDtsGeneration(reason);
+  function ensureNormalizedDtsGeneration(reason: string): boolean {
+    if (!options.normalizedDts) return false;
+    return runNormalizedDtsGeneration(reason);
   }
 
   function registerTsBridgeWatcher(devServer: ViteDevServer) {
@@ -1200,7 +1251,7 @@ export default function moonbitPlugin(
       }
 
       ensureTsBridgeGeneration("configResolved");
-      ensureNormalizedDtsGeneration("configResolved");
+      didNormalizeDtsAtStartup = ensureNormalizedDtsGeneration("configResolved");
     },
 
     configureServer(devServer) {
@@ -1338,7 +1389,9 @@ export { init };
       if (!didGenerateTsBridges) {
         ensureTsBridgeGeneration("buildStart");
       }
-      ensureNormalizedDtsGeneration("buildStart");
+      if (!didNormalizeDtsAtStartup) {
+        didNormalizeDtsAtStartup = ensureNormalizedDtsGeneration("buildStart");
+      }
     },
 
     buildEnd() {

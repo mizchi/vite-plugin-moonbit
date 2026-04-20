@@ -99,8 +99,9 @@ test("normalizedDts rewrites generated declaration files in place", () => {
       repoRoot,
       {
         ...process.env,
-        TS_MBT_NORMALIZED_DTS_GENERATOR_ROOT: fakeGenerator.root,
-        TS_MBT_NORMALIZED_DTS_GENERATOR_COMMAND: fakeGenerator.commandPath,
+        TS_MBT_GENERATOR_ROOT: fakeGenerator.root,
+        TS_MBT_GENERATOR_COMMAND: fakeGenerator.commandPath,
+        TS_MBT_ENABLE_NORMALIZED_DTS: "1",
       },
     );
 

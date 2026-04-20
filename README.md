@@ -218,6 +218,23 @@ moonbit({
 })
 ```
 
+If you already use `tsBridge`, you can reuse its generator settings:
+
+```ts
+moonbit({
+  tsBridge: {
+    generatorRoot: "../ts.mbt",
+    entries: ["./src/api/client.ts"],
+  },
+  normalizedDts: {},
+})
+```
+
+Today the normalizer is intentionally narrow. It mainly rewrites the
+MoonBit-generated namespace alias layer into clearer primitives and named type
+imports. Treat it as a readability pass for MoonBit output, not a general
+purpose `.d.ts` pretty-printer.
+
 This runs, for each generated declaration file except `moonbit.d.ts`:
 
 ```bash
@@ -225,6 +242,12 @@ moon -C ../ts.mbt run src -- normalize-moonbit-dts \
   /abs/path/to/_build/js/release/build/app.d.ts \
   /abs/path/to/_build/js/release/build/app.d.ts
 ```
+
+When `normalizedDts` is enabled but skipped, the plugin now logs why:
+
+- no generator root was configured
+- the MoonBit build directory does not exist yet
+- no generated declaration files were found
 
 ## Path Resolution
 

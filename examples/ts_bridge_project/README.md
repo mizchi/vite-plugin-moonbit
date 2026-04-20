@@ -41,19 +41,20 @@ If you also have a local `mizchi/ts.mbt` checkout, `vite.config.ts` enables
 `src/api/math.ts` changes.
 
 The same `vite.config.ts` also accepts the experimental `normalizedDts`
-integration through environment variables. When enabled, the plugin rewrites
+integration through an environment flag. When enabled, the plugin rewrites
 MoonBit-generated `_build/.../*.d.ts` files in place after each build so the
 published TypeScript surface is easier to read.
 
 ```bash
-TS_MBT_NORMALIZED_DTS_GENERATOR_ROOT=../../../ts.mbt \
+TS_MBT_ENABLE_NORMALIZED_DTS=1 \
 pnpm vite dev
 ```
 
 This example keeps `normalizedDts` opt-in because it is still experimental.
-It is useful when your editor or downstream TypeScript project should see
-`number` / `string` instead of `MoonBit.Double` / `MoonBit.String` in the
-generated declarations.
+It reuses the same `generatorRoot` and `command` as `tsBridge`, so the config
+can stay as `normalizedDts: {}`. It is useful when your editor or downstream
+TypeScript project should see `number` / `string` instead of
+`MoonBit.Double` / `MoonBit.String` in the generated declarations.
 
 To regenerate the bridge package manually:
 
