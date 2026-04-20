@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.1](https://github.com/mizchi/vite-plugin-moonbit/compare/vite-plugin-moonbit-v0.2.0...vite-plugin-moonbit-v0.2.1) (2026-04-20)
+
+
+### Features
+
+* add experimental `tsBridge` integration for generating typed MoonBit bridge packages from TypeScript entrypoints
+* auto-inject generated bridge bindings and add a checked-in `ts_bridge_project` example
+
+
+### Bug Fixes
+
+* keep bridge bindings tree-shake friendly by using module-scoped adapter exports
+* cover the `ts_bridge_project` example in CI and test flows
+
 ## [0.2.0](https://github.com/mizchi/vite-plugin-moonbit/compare/vite-plugin-moonbit-v0.1.5...vite-plugin-moonbit-v0.2.0) (2026-04-18)
 
 
