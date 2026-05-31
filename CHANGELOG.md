@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/mizchi/vite-plugin-moonbit/compare/vite-plugin-moonbit-v0.2.1...vite-plugin-moonbit-v0.3.0) (2026-05-31)
+
+
+### Features
+
+* support moon.mod DSL manifest format ([#16](https://github.com/mizchi/vite-plugin-moonbit/issues/16)) ([d5cabd9](https://github.com/mizchi/vite-plugin-moonbit/commit/d5cabd9a9e0eda83cdbc2089752f8c7fafee049c))
+
 ## [0.2.1](https://github.com/mizchi/vite-plugin-moonbit/compare/vite-plugin-moonbit-v0.2.0...vite-plugin-moonbit-v0.2.1) (2026-04-20)
 
 
