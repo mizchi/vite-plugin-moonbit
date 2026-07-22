@@ -298,6 +298,98 @@ test("ts bridge opts into generated runtime validators explicitly", () => {
   }
 });
 
+test("ts bridge resolves npm and Node builtin declaration packages", () => {
+  ensureExampleNodeModules();
+  const fakeGenerator = createFakeTsBridgeGenerator();
+  const configPath = path.join(
+    exampleDir,
+    "vite.ts-bridge-package-entries.config.mjs",
+  );
+  const typescriptDeclaration = fs.realpathSync(
+    path.join(repoRoot, "node_modules", "typescript", "lib", "typescript.d.ts"),
+  );
+  const nodeFsDeclaration = fs.realpathSync(
+    path.join(repoRoot, "node_modules", "@types", "node", "fs.d.ts"),
+  );
+  try {
+    fs.writeFileSync(
+      configPath,
+      `import moonbit from "vite-plugin-moonbit";
+
+export default {
+  root: ${JSON.stringify(exampleDir)},
+  plugins: [
+    moonbit({
+      root: ${JSON.stringify(exampleDir)},
+      watch: false,
+      showLogs: false,
+      tsBridge: {
+        generatorRoot: ${JSON.stringify(fakeGenerator.root)},
+        command: ${JSON.stringify(fakeGenerator.commandPath)},
+        entries: [
+          {
+            package: "typescript",
+            outDir: "src/gen/typescript_bridge",
+          },
+          {
+            package: "@types/node/fs",
+            moduleSpec: "node:fs",
+            outDir: "src/gen/node_fs_bridge",
+          },
+        ],
+      },
+    }),
+  ],
+};
+`,
+    );
+    run("pnpm", ["build"], repoRoot);
+    run("moon", ["build", "--release"], exampleDir);
+    run(
+      "pnpm",
+      [
+        "exec",
+        "vite",
+        "build",
+        "--config",
+        "examples/ts_bridge_project/vite.ts-bridge-package-entries.config.mjs",
+      ],
+      repoRoot,
+    );
+
+    const calls = fs
+      .readFileSync(fakeGenerator.logPath, "utf-8")
+      .trim()
+      .split("\n");
+    assert.deepEqual(calls, [
+      "build --target js --release src/mtsc",
+      `checkGraph:${typescriptDeclaration}?false|`,
+      [
+        "run",
+        "src/cmd/ts2mbt",
+        "--",
+        "package",
+        typescriptDeclaration,
+        "typescript",
+        path.join(exampleDir, "src", "gen", "typescript_bridge"),
+      ].join(" "),
+      `checkGraph:${nodeFsDeclaration}?false|`,
+      [
+        "run",
+        "src/cmd/ts2mbt",
+        "--",
+        "package",
+        nodeFsDeclaration,
+        "node:fs",
+        path.join(exampleDir, "src", "gen", "node_fs_bridge"),
+      ].join(" "),
+    ]);
+  } finally {
+    fs.rmSync(configPath, { force: true });
+    fs.rmSync(fakeGenerator.root, { recursive: true, force: true });
+  }
+});
+
 test("npm package option generates a publishable MoonBit facade through mbt2ts", () => {
   ensureExampleNodeModules();
   const generatedMbtiPath = path.join(

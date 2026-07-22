@@ -14,6 +14,7 @@ const enableNormalizedDts = process.env.TS_MBT_ENABLE_NORMALIZED_DTS === "1";
 const enableRuntimeValidation =
   process.env.TS_MBT_RUNTIME_VALIDATION === "1";
 const enableNpmPackage = process.env.TS_MBT_ENABLE_NPM_PACKAGE === "1";
+const enableNodeFsBridge = process.env.TS_MBT_ENABLE_NODE_FS_BRIDGE === "1";
 const bundleNpmPackage = process.env.TS_MBT_NPM_BUNDLE !== "0";
 const npmPackageName = process.env.TS_MBT_NPM_NAME;
 const npmPackageVersion = process.env.TS_MBT_NPM_VERSION;
@@ -30,7 +31,18 @@ export default defineConfig({
             generatorRoot,
             command: generatorCommand,
             runtimeValidation: enableRuntimeValidation,
-            entries: ["./src/api/math.ts"],
+            entries: [
+              "./src/api/math.ts",
+              ...(enableNodeFsBridge
+                ? [
+                    {
+                      package: "@types/node/fs",
+                      moduleSpec: "node:fs",
+                      outDir: "src/gen/node_fs_bridge",
+                    },
+                  ]
+                : []),
+            ],
           }
         : undefined,
       normalizedDts: hasGenerator && enableNormalizedDts

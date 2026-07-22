@@ -3,3 +3,4 @@ _build
 .mooncakes
 node_modules
 dist
+src/gen/node_fs_bridge

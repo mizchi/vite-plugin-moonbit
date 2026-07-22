@@ -62,6 +62,54 @@ TS_MBT_RUNTIME_VALIDATION=1 pnpm vite dev
 This makes the plugin invoke `ts2mbt package-validated` and adds public
 `validate<Type>(value : JSValue) -> Type?` functions to the generated package.
 
+### npm packages and Node built-ins
+
+`tsBridge.entries` can also resolve a package declaration directly. This keeps
+the package name at the Vite boundary while MoonBit imports only the generated,
+typed bridge package. A package root uses its `types`/`typings` declaration;
+for a package subpath, the plugin resolves that subpath's declaration file.
+
+This example can generate a bridge for Node's `fs` API. (The checked-in
+`src/api/math.ts` is the companion example for a hand-written TypeScript
+module.) Install the declarations in a standalone copy of the example, then
+enable the optional entry:
+
+```bash
+pnpm add -D @types/node
+TS_MBT_ENABLE_NODE_FS_BRIDGE=1 pnpm vite build
+```
+
+The relevant Vite configuration is:
+
+```ts
+tsBridge: {
+  generatorRoot,
+  entries: [
+    "./src/api/math.ts",
+    {
+      package: "@types/node/fs",
+      moduleSpec: "node:fs",
+      outDir: "src/gen/node_fs_bridge",
+    },
+  ],
+}
+```
+
+MoonBit can then import `internal/app/gen/node_fs_bridge` as an ordinary
+generated package. Keep the `node:fs` bridge in a Vite SSR or Node-only MoonBit
+entrypoint; it cannot run in a browser bundle.
+
+For example, after generation a Node-only MoonBit package can use the emitted
+typed API directly:
+
+```moonbit
+import "internal/app/gen/node_fs_bridge" @fs
+
+pub fn file_exists(filepath : String) -> Bool {
+  @fs.existsSync(@fs.path_like_from_string(filepath))
+}
+```
+
 This example keeps `normalizedDts` opt-in because it is still experimental.
 It reuses the same `generatorRoot` and `command` as `tsBridge`, so the config
 can stay as `normalizedDts: {}`. It is useful when your editor or downstream
