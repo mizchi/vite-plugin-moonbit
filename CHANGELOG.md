@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/mizchi/vite-plugin-moonbit/compare/vite-plugin-moonbit-v0.5.0...vite-plugin-moonbit-v0.5.1) (2026-07-22)
+
+
+### Bug Fixes
+
+* serialize shared example tests ([c8cda7f](https://github.com/mizchi/vite-plugin-moonbit/commit/c8cda7f3dd27c13a08bc654530bc6e031a81ce98))
+
 ## [0.5.0](https://github.com/mizchi/vite-plugin-moonbit/compare/vite-plugin-moonbit-v0.4.0...vite-plugin-moonbit-v0.5.0) (2026-07-22)
 
 
