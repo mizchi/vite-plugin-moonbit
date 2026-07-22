@@ -66,13 +66,29 @@ function createFakeNormalizedDtsGenerator() {
   const logPath = path.join(root, "args.log");
   const commandPath = path.join(root, "fake-moon");
   fs.writeFileSync(path.join(root, "moon.mod.json"), "{}\n");
+  const checkerPath = path.join(
+    root,
+    "_build",
+    "js",
+    "release",
+    "build",
+    "mtsc",
+    "mtsc.js",
+  );
+  fs.mkdirSync(path.dirname(checkerPath), { recursive: true });
+  fs.writeFileSync(
+    checkerPath,
+    'export function checkModuleGraph() { return ""; }\n',
+  );
   fs.writeFileSync(
     commandPath,
     `#!/bin/sh
-printf '%s\n' "$@" > "${logPath}"
+printf '%s\n' "$*" >> "${logPath}"
+if [ "$1" = "run" ] && [ "$4" = "normalize" ]; then
 cat <<'EOF' > "$6"
 export type __NormalizedDtsSentinel = "NORMALIZED_DTS_SENTINEL";
 EOF
+fi
 exit 0
 `,
     { mode: 0o755 },
@@ -112,15 +128,21 @@ test("normalizedDts rewrites generated declaration files in place", () => {
       ),
     );
 
-    const loggedArgs = fs.readFileSync(fakeGenerator.logPath, "utf-8").trim().split("\n");
-    assert.deepEqual(loggedArgs, [
-      "run",
-      "src",
-      "--",
-      "normalize-moonbit-dts",
-      normalizedDtsPath,
-      normalizedDtsPath,
-    ]);
+    const loggedCalls = fs
+      .readFileSync(fakeGenerator.logPath, "utf-8")
+      .trim()
+      .split("\n");
+    assert.equal(
+      loggedCalls.at(-1),
+      [
+        "run",
+        "src/cmd/mbt2ts",
+        "--",
+        "normalize",
+        normalizedDtsPath,
+        normalizedDtsPath,
+      ].join(" "),
+    );
 
     const rewritten = fs.readFileSync(normalizedDtsPath, "utf-8");
     assert.ok(
