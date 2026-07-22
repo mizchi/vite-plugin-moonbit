@@ -164,6 +164,29 @@ For the string shorthand above, the plugin infers:
 You can still pass the full object form when you need to override either of
 those defaults.
 
+To bridge a dependency rather than a project file, use `package`. The plugin
+resolves the package from the Vite root, reads its `package.json`, and selects
+its declaration entrypoint. A subpath such as `@types/node/fs` resolves the
+declaration for that subpath. Keep `moduleSpec` explicit when the runtime name
+differs from the declaration package name.
+
+```ts
+tsBridge: {
+  generatorRoot: "../ts.mbt",
+  entries: [
+    "./src/api/client.ts",
+    {
+      package: "@types/node/fs",
+      moduleSpec: "node:fs",
+      outDir: "src/gen/node_fs_bridge",
+    },
+  ],
+}
+```
+
+Install the selected package in the consuming project. The generated
+`node:fs` bridge is for Node/SSR MoonBit code, not a browser Vite entrypoint.
+
 Use a non-relative `moduleSpec` whenever possible, for example
 `/src/api/client.ts`, `node:fs`, or a bare package name. The generator can emit
 leaner MoonBit FFI for non-relative specifiers. Relative specs like

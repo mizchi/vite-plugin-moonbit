@@ -1,5 +1,6 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
+import { createRequire } from "node:module";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Plugin, ViteDevServer, ResolvedConfig } from "vite";
@@ -109,7 +110,26 @@ export interface MoonbitTsBridgeEntrySpec {
   outDir: string;
 }
 
-export type MoonbitTsBridgeEntry = string | (Partial<MoonbitTsBridgeEntrySpec> & Pick<MoonbitTsBridgeEntrySpec, "entry">);
+export interface MoonbitTsBridgePackageEntrySpec {
+  /**
+   * npm package whose declaration file should be bridged. A package subpath is
+   * supported, for example `@types/node/fs` resolves `fs.d.ts` from
+   * `@types/node`.
+   */
+  package: string;
+
+  /** Runtime module specifier imported by the generated `bridge.js`. */
+  moduleSpec?: string;
+
+  /** Output package directory inside the MoonBit project. */
+  outDir?: string;
+}
+
+export type MoonbitTsBridgeEntry =
+  | string
+  | (Partial<MoonbitTsBridgeEntrySpec> &
+      Pick<MoonbitTsBridgeEntrySpec, "entry">)
+  | MoonbitTsBridgePackageEntrySpec;
 
 export interface MoonbitTsBridgeOptions {
   /**
@@ -310,12 +330,158 @@ export default function moonbitPlugin(
     return path.resolve(root, filepath);
   }
 
+  function inferTsBridgeOutDir(name: string): string {
+    const slug = name
+      .replace(/^@/, "")
+      .replace(/[^A-Za-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+    return path.posix.join("gen", `${slug || "bridge"}_bridge`);
+  }
+
+  function splitTsBridgePackageSpecifier(packageSpecifier: string): {
+    packageName: string;
+    subpath: string | null;
+  } {
+    const segments = packageSpecifier.split("/").filter(Boolean);
+    const packageSegmentCount = packageSpecifier.startsWith("@") ? 2 : 1;
+    if (
+      segments.length < packageSegmentCount ||
+      (packageSpecifier.startsWith("@") && !segments[1])
+    ) {
+      throw new Error(
+        `[moonbit] Invalid tsBridge package entry ${JSON.stringify(packageSpecifier)}`,
+      );
+    }
+    return {
+      packageName: segments.slice(0, packageSegmentCount).join("/"),
+      subpath: segments.slice(packageSegmentCount).join("/") || null,
+    };
+  }
+
+  function resolveTsBridgePackageJson(packageName: string): string {
+    const base = config?.root ?? root;
+    const requireFromRoot = createRequire(
+      path.join(base, "__vite_plugin_moonbit_ts_bridge_resolver__.cjs"),
+    );
+    try {
+      return requireFromRoot.resolve(`${packageName}/package.json`);
+    } catch {
+      let resolvedEntrypoint: string;
+      try {
+        resolvedEntrypoint = requireFromRoot.resolve(packageName);
+      } catch {
+        throw new Error(
+          `[moonbit] Could not resolve tsBridge package ${JSON.stringify(packageName)} from ${base}. Install it in the Vite project or use an { entry: "..." } bridge entry.`,
+        );
+      }
+      let directory = path.dirname(resolvedEntrypoint);
+      while (directory !== path.dirname(directory)) {
+        const packageJsonPath = path.join(directory, "package.json");
+        if (fs.existsSync(packageJsonPath)) {
+          const manifest = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8")) as {
+            name?: unknown;
+          };
+          if (manifest.name === packageName) return packageJsonPath;
+        }
+        directory = path.dirname(directory);
+      }
+      throw new Error(
+        `[moonbit] Could not locate package.json for tsBridge package ${JSON.stringify(packageName)}`,
+      );
+    }
+  }
+
+  function declarationPathFromExport(value: unknown): string | null {
+    if (typeof value === "string") {
+      return /\.d\.[cm]?tsx?$/.test(value) ? value : null;
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const conditions = value as Record<string, unknown>;
+    return (
+      declarationPathFromExport(conditions.types) ??
+      declarationPathFromExport(conditions.typings) ??
+      declarationPathFromExport(conditions.default) ??
+      Object.values(conditions)
+        .map(declarationPathFromExport)
+        .find((candidate): candidate is string => candidate !== null) ??
+      null
+    );
+  }
+
+  function resolveTsBridgePackageDeclaration(packageSpecifier: string): string {
+    const { packageName, subpath } = splitTsBridgePackageSpecifier(
+      packageSpecifier,
+    );
+    const packageJsonPath = resolveTsBridgePackageJson(packageName);
+    const packageDir = path.dirname(packageJsonPath);
+    let manifest: {
+      types?: unknown;
+      typings?: unknown;
+      exports?: unknown;
+    };
+    try {
+      manifest = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8")) as typeof manifest;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `[moonbit] Could not read tsBridge package manifest ${packageJsonPath}\n${message}`,
+      );
+    }
+
+    const exportKey = subpath ? `./${subpath}` : ".";
+    const exports = manifest.exports;
+    const exportEntry =
+      exports && typeof exports === "object" && !Array.isArray(exports)
+        ? (exports as Record<string, unknown>)[exportKey]
+        : subpath
+          ? undefined
+          : exports;
+    const declaredPath =
+      declarationPathFromExport(exportEntry) ??
+      (!subpath && typeof manifest.types === "string" ? manifest.types : null) ??
+      (!subpath && typeof manifest.typings === "string" ? manifest.typings : null);
+    const basePath = declaredPath ?? subpath ?? "index";
+    const extension = path.extname(basePath);
+    const candidates = [
+      basePath,
+      extension ? null : `${basePath}.d.ts`,
+      extension ? null : `${basePath}.d.mts`,
+      extension ? null : `${basePath}.d.cts`,
+      path.posix.join(basePath, "index.d.ts"),
+    ].filter((candidate): candidate is string => candidate !== null);
+
+    for (const candidate of candidates) {
+      const resolved = path.resolve(packageDir, candidate);
+      if (
+        (resolved === packageDir || resolved.startsWith(`${packageDir}${path.sep}`)) &&
+        fs.existsSync(resolved) &&
+        fs.statSync(resolved).isFile()
+      ) {
+        return fs.realpathSync(resolved);
+      }
+    }
+
+    throw new Error(
+      `[moonbit] Could not resolve a declaration file for tsBridge package ${JSON.stringify(packageSpecifier)}. Use an { entry: "..." } bridge entry for packages with a custom declaration layout.`,
+    );
+  }
+
   function resolveTsBridgeEntries(): ResolvedMoonbitTsBridgeEntry[] {
     const tsBridge = options.tsBridge;
     if (!tsBridge) return [];
     return tsBridge.entries.map((entrySpec) => {
       const normalized =
         typeof entrySpec === "string" ? { entry: entrySpec } : entrySpec;
+      if ("package" in normalized) {
+        const entry = resolveTsBridgePackageDeclaration(normalized.package);
+        return {
+          entry,
+          moduleSpec: normalized.moduleSpec ?? normalized.package,
+          outDir: resolveMoonbitPath(
+            normalized.outDir ?? inferTsBridgeOutDir(normalized.package),
+          ),
+        };
+      }
       const entry = resolveConfigPath(normalized.entry);
       const relativeEntry = path
         .relative(config?.root ?? root, entry)
@@ -473,14 +639,12 @@ export default function moonbitPlugin(
       });
 
       for (const specifier of tsBridgeImportSpecifiers(source)) {
+        if (!isTsBridgeRelativeOrRootSpecifier(specifier)) continue;
         const resolved = await resolver(specifier, filepath);
         if (!resolved) {
-          if (isTsBridgeRelativeOrRootSpecifier(specifier)) {
-            throw new Error(
-              `[moonbit] Could not resolve local TS bridge import ${JSON.stringify(specifier)} from ${filepath}`,
-            );
-          }
-          continue;
+          throw new Error(
+            `[moonbit] Could not resolve local TS bridge import ${JSON.stringify(specifier)} from ${filepath}`,
+          );
         }
         const dependency = cleanResolvedTsBridgePath(resolved);
         if (isTsBridgeSourcePath(dependency) && !isNodeModulePath(dependency)) {
