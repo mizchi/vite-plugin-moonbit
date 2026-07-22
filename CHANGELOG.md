@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/mizchi/vite-plugin-moonbit/compare/vite-plugin-moonbit-v0.3.0...vite-plugin-moonbit-v0.4.0) (2026-07-22)
+
+
+### Features
+
+* finalize TypeScript bridge integrations ([c59273b](https://github.com/mizchi/vite-plugin-moonbit/commit/c59273bb52dc880e79d1053849d92a91becf7cc1))
+
 ## [0.3.0](https://github.com/mizchi/vite-plugin-moonbit/compare/vite-plugin-moonbit-v0.2.1...vite-plugin-moonbit-v0.3.0) (2026-05-31)
 
 
