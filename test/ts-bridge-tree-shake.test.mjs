@@ -202,6 +202,30 @@ test("ts bridge example keeps bridge bindings tree-shake friendly", () => {
   }
 });
 
+test("checked-in TS bridges resolve without the generator checkout", () => {
+  ensureExampleNodeModules();
+  const installedBridgeScope = path.join(exampleNodeModulesDir, "@tsmbt-bridge");
+  const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "tsmbt-bridge-stash-"));
+  const stashedBridgeScope = path.join(stashDir, "@tsmbt-bridge");
+  const hadInstalledBridge = fs.existsSync(installedBridgeScope);
+  if (hadInstalledBridge) fs.renameSync(installedBridgeScope, stashedBridgeScope);
+  try {
+    run("moon", ["build", "--release"], exampleDir);
+    runWithEnv(
+      "pnpm",
+      ["exec", "vite", "build", "--config", "examples/ts_bridge_project/vite.config.ts"],
+      repoRoot,
+      {
+        ...process.env,
+        TS_MBT_GENERATOR_ROOT: path.join(os.tmpdir(), "tsmbt-no-generator"),
+      },
+    );
+  } finally {
+    if (hadInstalledBridge) fs.renameSync(stashedBridgeScope, installedBridgeScope);
+    fs.rmSync(stashDir, { recursive: true, force: true });
+  }
+});
+
 test("ts bridge type errors stop generation before MoonBit build", () => {
   ensureExampleNodeModules();
   const fakeGenerator = createFakeTsBridgeGenerator("TYPE_ERROR: invalid bridge input");

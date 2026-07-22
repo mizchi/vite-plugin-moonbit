@@ -605,28 +605,62 @@ export default function moonbitPlugin(
     }
   }
 
+  function registerTsBridgeRuntimeModule(
+    runtimeModules: Map<string, string>,
+    packageDir: string,
+  ) {
+    const packageJsonPath = path.join(packageDir, "package.json");
+    const bridgeJsPath = path.join(packageDir, "bridge.js");
+    if (!fs.existsSync(packageJsonPath) || !fs.existsSync(bridgeJsPath)) {
+      return;
+    }
+    try {
+      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
+      if (
+        packageJson !== null &&
+        typeof packageJson === "object" &&
+        typeof packageJson.name === "string" &&
+        packageJson.name.length > 0
+      ) {
+        runtimeModules.set(packageJson.name, bridgeJsPath);
+      }
+    } catch {
+      // The bridge generator owns this manifest. Let its generated import
+      // produce Vite's normal diagnostic if it is malformed.
+    }
+  }
+
   function tsBridgeRuntimeModules(): Map<string, string> {
     const runtimeModules = new Map<string, string>();
     for (const entry of resolveTsBridgeEntries()) {
-      const packageJsonPath = path.join(entry.outDir, "package.json");
-      const bridgeJsPath = path.join(entry.outDir, "bridge.js");
-      if (!fs.existsSync(packageJsonPath) || !fs.existsSync(bridgeJsPath)) {
-        continue;
-      }
+      registerTsBridgeRuntimeModule(runtimeModules, entry.outDir);
+    }
+
+    const visited = new Set<string>();
+    const visitSourceTree = (directory: string) => {
+      const absolute = path.resolve(directory);
+      if (visited.has(absolute)) return;
+      visited.add(absolute);
+      registerTsBridgeRuntimeModule(runtimeModules, absolute);
       try {
-        const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
-        if (
-          packageJson !== null &&
-          typeof packageJson === "object" &&
-          typeof packageJson.name === "string" &&
-          packageJson.name.length > 0
-        ) {
-          runtimeModules.set(packageJson.name, bridgeJsPath);
+        for (const child of fs.readdirSync(absolute, { withFileTypes: true })) {
+          if (
+            !child.isDirectory() ||
+            child.name === "_build" ||
+            child.name === ".mooncakes" ||
+            child.name === "node_modules"
+          ) {
+            continue;
+          }
+          visitSourceTree(path.join(absolute, child.name));
         }
       } catch {
-        // The bridge generator owns this manifest. Let its generated import
-        // produce Vite's normal diagnostic if it is malformed.
+        // A source directory may disappear during a watch rebuild. The next
+        // module resolution pass will rescan the current tree.
       }
+    };
+    for (const member of projectInfo?.members ?? []) {
+      visitSourceTree(path.join(member.memberDir, member.source));
     }
     return runtimeModules;
   }
