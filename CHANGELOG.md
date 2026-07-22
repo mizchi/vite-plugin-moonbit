@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/mizchi/vite-plugin-moonbit/compare/vite-plugin-moonbit-v0.4.0...vite-plugin-moonbit-v0.5.0) (2026-07-22)
+
+
+### Features
+
+* bridge npm declaration packages ([4b5ef04](https://github.com/mizchi/vite-plugin-moonbit/commit/4b5ef040148a1ee8d1d6d2c7a239d629ecb07af8))
+
 ## [0.4.0](https://github.com/mizchi/vite-plugin-moonbit/compare/vite-plugin-moonbit-v0.3.0...vite-plugin-moonbit-v0.4.0) (2026-07-22)
 
 
