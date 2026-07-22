@@ -605,6 +605,44 @@ export default function moonbitPlugin(
     }
   }
 
+  function tsBridgeRuntimeModules(): Map<string, string> {
+    const runtimeModules = new Map<string, string>();
+    for (const entry of resolveTsBridgeEntries()) {
+      const packageJsonPath = path.join(entry.outDir, "package.json");
+      const bridgeJsPath = path.join(entry.outDir, "bridge.js");
+      if (!fs.existsSync(packageJsonPath) || !fs.existsSync(bridgeJsPath)) {
+        continue;
+      }
+      try {
+        const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
+        if (
+          packageJson !== null &&
+          typeof packageJson === "object" &&
+          typeof packageJson.name === "string" &&
+          packageJson.name.length > 0
+        ) {
+          runtimeModules.set(packageJson.name, bridgeJsPath);
+        }
+      } catch {
+        // The bridge generator owns this manifest. Let its generated import
+        // produce Vite's normal diagnostic if it is malformed.
+      }
+    }
+    return runtimeModules;
+  }
+
+  function tsBridgeRuntimeResolver(): Plugin | null {
+    const runtimeModules = tsBridgeRuntimeModules();
+    if (runtimeModules.size === 0) return null;
+    return {
+      name: "vite-plugin-moonbit:ts-bridge-runtime",
+      enforce: "pre",
+      resolveId(id) {
+        return runtimeModules.get(id) ?? null;
+      },
+    };
+  }
+
   async function bundleNpmPackage(
     outDir: string,
     entry: string,
@@ -613,10 +651,12 @@ export default function moonbitPlugin(
     fs.rmSync(bundleDir, { recursive: true, force: true });
     try {
       const { build } = await import("vite");
+      const runtimeResolver = tsBridgeRuntimeResolver();
       await build({
         configFile: false,
         root: config.root,
         logLevel: "error",
+        plugins: runtimeResolver ? [runtimeResolver] : [],
         resolve: {
           alias: config.resolve.alias,
         },
@@ -1789,6 +1829,8 @@ export default function moonbitPlugin(
     },
 
     resolveId(id) {
+      const bridgeRuntime = tsBridgeRuntimeModules().get(id);
+      if (bridgeRuntime) return bridgeRuntime;
       if (!id.startsWith(MBT_PREFIX)) return null;
 
       // Pass the query through (e.g. `?worker`, `?url`, `?raw`) — the caller
