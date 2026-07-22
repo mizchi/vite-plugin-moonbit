@@ -22,7 +22,7 @@
     "build:parser": "moon -C tools/moon_pkg_parser build --release --target js",
     "build": "pnpm build:parser && tsdown",
     "pretest": "pnpm build:parser",
-    "test": "node --test",
+    "test": "node --test --test-concurrency=1",
     "prepublishOnly": "pnpm build"
   },
   "repository": {
