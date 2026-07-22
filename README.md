@@ -122,17 +122,21 @@ Check out: `npx tiged mizchi/vite-plugin-moonbit/examples/wasm_project myapp`
 | `target` | `'js' \| 'wasm' \| 'wasm-gc'` | `'js'` | Build target |
 | `showLogs` | `boolean` | `true` | Show build logs |
 | `prefix` | `string` | `'mbt:'` | Import prefix for this plugin instance |
-| `tsBridge` | `MoonbitTsBridgeOptions` | `undefined` | Experimental: generate MoonBit bridge packages from TS entrypoints before build |
+| `tsBridge` | `MoonbitTsBridgeOptions` | `undefined` | Type-check TS entrypoints and generate MoonBit bridge packages before build |
+| `npmPackage` | `MoonbitNpmPackageOptions` | `undefined` | Emit an npm-publishable ESM + `.d.ts` package from MoonBit |
 | `normalizedDts` | `MoonbitNormalizedDtsOptions` | `undefined` | Experimental: rewrite MoonBit-generated `_build/.../*.d.ts` with clearer TS declarations |
 
-### Experimental TypeScript bridge packages
+### TypeScript bridge packages
 
 Use `tsBridge` when MoonBit should consume a TypeScript entrypoint through a
-generated typed bridge package.
+generated typed bridge package. Each entry is strictly type-checked before its
+MoonBit bindings are generated. If `mtsc` reports an error, Vite stops before
+writing or using a bridge package.
 
-This integration is still experimental. The `tsBridge` option shape, generated
-MoonBit surface, and the amount of emitted `bridge.js` glue may still change as
-MoonBit and `mizchi/ts.mbt` backend constraints are worked through.
+`tsBridge` is the public integration for TypeScript → MoonBit. Its consumer
+contract is the option shape below and generated `moon.pkg`, `bridge.mbti`,
+`bridge.mbt`, `bridge.js`, and `package.json`. Do not import the checker module
+or generated glue directly from application code.
 
 ```ts
 // vite.config.ts
@@ -167,21 +171,44 @@ leaner MoonBit FFI for non-relative specifiers. Relative specs like
 `bridge.js` wrappers because MoonBit `#module("...")` does not currently accept
 relative module paths.
 
-This runs:
+For each configured generator root, the plugin builds `src/mtsc` for the
+MoonBit JS target and imports its `checkModuleGraph` ESM export directly. It
+uses Vite's resolver to collect local TS/TSX dependencies and resolved import
+edges for every configured entry, then type-checks that complete graph before
+generating a bridge. It does not run `mtsc` as a command or create a temporary
+JavaScript output file. The built checker module is reused until its `src/` or
+Moon manifest inputs change; diagnostic paths are displayed relative to the
+Vite root.
+
+Only after that succeeds, it generates the bridge package:
 
 ```bash
-moon -C ../ts.mbt run src -- emit-moonbit-bridge-package \
+moon -C ../ts.mbt run src/cmd/ts2mbt -- package \
   /abs/path/to/src/api/client.ts \
   /src/api/client.ts \
   /abs/path/to/moonbit-app/src/gen/client_bridge
 ```
 
+Set `runtimeValidation: true` when the generated package must validate
+untrusted JS values at an explicit boundary. This selects `package-validated`
+and emits `validate<Type>(value : JSValue) -> Type?` only for generated
+structural types; it does not add hidden checks to normal bridge calls.
+
+```ts
+tsBridge: {
+  generatorRoot: "../ts.mbt",
+  runtimeValidation: true,
+  entries: ["./src/api/client.ts"],
+}
+```
+
 The generated package contains:
 
-- `moon.pkg.json`
+- `moon.pkg`
 - `bridge.mbti`
 - `bridge.mbt`
 - `bridge.js`
+- `package.json`
 
 Everything inside `outDir` is generated. The surrounding MoonBit package that
 imports that bridge package remains hand-written.
@@ -200,6 +227,73 @@ See [examples/ts_bridge_project](./examples/ts_bridge_project) for a complete
 example that checks in the generated bridge package and wraps a TypeScript
 entrypoint from MoonBit.
 
+### npm package output
+
+`npmPackage` makes a MoonBit package publishable as a conventional npm ESM
+library. It invokes `moon info`, uses `mbt2ts` to generate the public
+`.d.ts`, `package.json`, and MoonBit facade, then bundles that facade together
+with local TypeScript bridge modules. Consumers therefore receive ordinary
+JavaScript and declarations; they do not need MoonBit, Vite, or generated
+`@tsmbt-bridge/*` dependencies at runtime.
+
+```ts
+moonbit({
+  root: __dirname,
+  tsBridge: {
+    generatorRoot: "../ts.mbt",
+    entries: ["./src/api/client.ts"],
+  },
+  npmPackage: {
+    entry: "internal/app", // MoonBit package name, or pkg.generated.mbti path
+    outDir: "dist/npm",
+    name: "@acme/app",
+    version: "0.1.0",
+  },
+})
+```
+
+`name` and `version` override the values derived by `mbt2ts`, so the generated
+directory is ready for your registry namespace and release version without a
+manual `package.json` edit.
+
+During `vite build`, the npm package is generated in `closeBundle`, after
+Vite has cleared its output directory. `outDir: "dist/npm"` is therefore
+safe. The generated directory contains `index.js`, `index.d.ts`, source map,
+`package.json`, and `AUTOLINK_DIAGNOSTICS.md`; verify and publish it with:
+
+```bash
+cd dist/npm
+npm pack --dry-run
+npm publish
+```
+
+`facade` defaults to `true`, so eligible MoonBit methods and constructors are
+made callable from JS. Set `strict: true` to reject omitted runtime members,
+and set `bundle: false` only when your consumer will provide all external
+runtime imports itself.
+
+`npmPackage` is the public MoonBit → TypeScript integration. Its required
+options are `entry` and `outDir`; it reuses `tsBridge.generatorRoot` and
+`tsBridge.command` when present, otherwise provide `generatorRoot` (and,
+optionally, `command`) directly. `name`, `version`, `importRewrites`, and
+`diagnostics` are passed to the package generator as documented controls.
+
+At this boundary, public MoonBit structs and enums are recursively normalized
+to ordinary JavaScript objects (tagged unions use `$tag`). Values returned by
+the package carry an internal opaque brand so they can safely be passed back to
+MoonBit APIs, but callers cannot construct a lookalike object themselves.
+MoonBit trait methods are intentionally not exposed on these plain values.
+
+An exported function whose parameter or result mentions a MoonBit type from
+outside the selected package tree is omitted from both the generated `.d.ts`
+and runtime exports, unless that import has been explicitly mapped to a
+publishable TypeScript module. The omission is listed in
+`AUTOLINK_DIAGNOSTICS.md`.
+Publish a primitive/JSON boundary package for that API (for example,
+`mizchi/markdown/api`) instead of leaking a cross-package MoonBit value. If
+such a type occurs only inside an otherwise public struct or enum, that nested
+slot is emitted as `unknown` so the declaration remains standalone.
+
 ### Experimental normalized `.d.ts`
 
 Use `normalizedDts` when you want the plugin to post-process MoonBit-generated
@@ -212,7 +306,7 @@ may still change. This post-process only runs on the Vite plugin path. If your
 workflow calls `moon build` directly, run the normalizer explicitly after build:
 
 ```bash
-moon -C ../ts.mbt run src -- normalize-moonbit-dts \
+moon -C ../ts.mbt run src/cmd/mbt2ts -- normalize \
   /abs/path/to/_build/js/release/build/app.d.ts \
   /abs/path/to/_build/js/release/build/app.d.ts
 ```

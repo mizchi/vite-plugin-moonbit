@@ -27,10 +27,11 @@ $ pnpm vite dev
 
 Everything under `src/gen/math_bridge/` is generated:
 
-- `src/gen/math_bridge/moon.pkg.json`
+- `src/gen/math_bridge/moon.pkg`
 - `src/gen/math_bridge/bridge.mbti`
 - `src/gen/math_bridge/bridge.mbt`
 - `src/gen/math_bridge/bridge.js`
+- `src/gen/math_bridge/package.json`
 
 The plugin detects `internal/app/gen/math_bridge` from `src/moon.pkg` and
 injects the generated bridge bindings automatically when `mbt:internal/app`
@@ -38,7 +39,7 @@ is loaded.
 
 If you also have a local `mizchi/ts.mbt` checkout, `vite.config.ts` enables
 `tsBridge` automatically and regenerates the bridge package when
-`src/api/math.ts` changes.
+`src/api/math.ts` or one of its local TS/TSX dependencies changes.
 
 The same `vite.config.ts` also accepts the experimental `normalizedDts`
 integration through an environment flag. When enabled, the plugin rewrites
@@ -52,6 +53,15 @@ TS_MBT_ENABLE_NORMALIZED_DTS=1 \
 pnpm vite dev
 ```
 
+For generated structural runtime validators, opt in explicitly:
+
+```bash
+TS_MBT_RUNTIME_VALIDATION=1 pnpm vite dev
+```
+
+This makes the plugin invoke `ts2mbt package-validated` and adds public
+`validate<Type>(value : JSValue) -> Type?` functions to the generated package.
+
 This example keeps `normalizedDts` opt-in because it is still experimental.
 It reuses the same `generatorRoot` and `command` as `tsBridge`, so the config
 can stay as `normalizedDts: {}`. It is useful when your editor or downstream
@@ -61,7 +71,7 @@ TypeScript project should see `number` / `string` instead of
 To normalize generated declarations manually:
 
 ```bash
-moon -C ../../../ts.mbt run src -- normalize-moonbit-dts \
+moon -C ../../../ts.mbt run src/cmd/mbt2ts -- normalize \
   "$PWD/_build/js/release/build/app.d.ts" \
   "$PWD/_build/js/release/build/app.d.ts"
 ```
@@ -69,7 +79,7 @@ moon -C ../../../ts.mbt run src -- normalize-moonbit-dts \
 To regenerate the bridge package manually:
 
 ```bash
-moon -C ../../../ts.mbt run src -- emit-moonbit-bridge-package \
+moon -C ../../../ts.mbt run src/cmd/ts2mbt -- package \
   "$PWD/src/api/math.ts" \
   /src/api/math.ts \
   "$PWD/src/gen/math_bridge"
@@ -81,11 +91,35 @@ non-relative specs let the generator emit smaller MoonBit FFI with fewer
 wrapper bindings. Relative specs still work, but they fall back to more
 generated `bridge.js` glue.
 
+### Publish the MoonBit API as npm
+
+Set `TS_MBT_ENABLE_NPM_PACKAGE=1` for the example's Vite build to emit a
+publishable package in `dist/npm`. It contains bundled ESM, `index.d.ts`, and
+`package.json`; the local TypeScript bridge is bundled into `index.js`, so npm
+consumers do not need this MoonBit project or `@tsmbt-bridge/*` at runtime.
+
+```bash
+TS_MBT_ENABLE_NPM_PACKAGE=1 \
+TS_MBT_GENERATOR_ROOT=/path/to/ts.mbt \
+TS_MBT_NPM_NAME=@acme/moonbit-math \
+TS_MBT_NPM_VERSION=0.1.0 \
+pnpm exec vite build --config vite.config.ts
+
+cd dist/npm
+npm pack --dry-run
+# npm publish
+```
+
+The name and version flags map directly to `npmPackage.name` and
+`npmPackage.version`; set them in your real Vite config instead of environment
+variables when they are stable for the project.
+
 In the checked-in `vite.config.ts`, this is now the shorthand form:
 
 ```ts
 tsBridge: {
   generatorRoot,
+  runtimeValidation: false, // set true for explicit JS boundary validators
   entries: ["./src/api/math.ts"],
 }
 ```

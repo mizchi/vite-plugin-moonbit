@@ -2,7 +2,7 @@
   "name": "internal/app",
   "version": "0.0.1",
   "deps": {
-    "mizchi/markdown": "0.1.1"
+    "mizchi/markdown": "0.6.2"
   },
   "source": "src",
   "preferred-target": "js"

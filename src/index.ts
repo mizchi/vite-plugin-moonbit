@@ -1,6 +1,7 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 import type { Plugin, ViteDevServer, ResolvedConfig } from "vite";
 import {
   type Member,
@@ -52,9 +53,9 @@ export interface MoonbitPluginOptions {
   useJsBuiltinString?: boolean;
 
   /**
-   * Experimental: generate MoonBit bridge packages from TypeScript entrypoints
-   * before starting `moon build`. The generator is provided by `mizchi/ts.mbt`.
-   * The API and generated surface may still change between releases.
+   * Strictly type-check TypeScript entrypoints through the `mizchi/ts/mtsc`
+   * MoonBit JavaScript module, then generate MoonBit bridge packages before
+   * starting `moon build`.
    */
   tsBridge?: MoonbitTsBridgeOptions;
 
@@ -64,6 +65,13 @@ export interface MoonbitPluginOptions {
    * The normalized output shape may still change between releases.
    */
   normalizedDts?: MoonbitNormalizedDtsOptions;
+
+  /**
+   * Generate an npm-publishable ESM package from a MoonBit package. The output
+   * contains JavaScript, `.d.ts`, and `package.json`, so it can be published
+   * without exposing MoonBit-specific build glue.
+   */
+  npmPackage?: MoonbitNpmPackageOptions;
 
   /**
    * Import prefix used to identify MoonBit modules. Change this when loading
@@ -106,18 +114,27 @@ export type MoonbitTsBridgeEntry = string | (Partial<MoonbitTsBridgeEntrySpec> &
 export interface MoonbitTsBridgeOptions {
   /**
    * Path to the `mizchi/ts.mbt` checkout. Resolved relative to the Vite root.
+   * The plugin builds `src/mtsc` for the JS target and imports its
+   * `checkModuleGraph` export directly before generating a bridge.
    */
   generatorRoot: string;
 
   /**
-   * Command used to invoke the generator.
+   * Command used to build the `mtsc` JS module and invoke the generator.
    * @default "moon"
    */
   command?: string;
 
   /**
-   * Experimental bridge package generation specs.
+   * Emit explicit `validate<Type>(JSValue)` boundary functions for generated
+   * structural types. Disabled by default so existing bridge APIs and runtime
+   * cost remain unchanged.
+   *
+   * @default false
    */
+  runtimeValidation?: boolean;
+
+  /** Bridge package generation specs. */
   entries: MoonbitTsBridgeEntry[];
 }
 
@@ -137,10 +154,101 @@ export interface MoonbitNormalizedDtsOptions {
   command?: string;
 }
 
+export interface MoonbitNpmPackageOptions {
+  /**
+   * MoonBit package name (for example `internal/app`) or a path to its
+   * `pkg.generated.mbti`. Package names are resolved from this Vite project's
+   * MoonBit workspace.
+   */
+  entry: string;
+
+  /**
+   * Directory that becomes the publishable npm package. Resolved relative to
+   * the Vite root.
+   */
+  outDir: string;
+
+  /**
+   * Path to the `mizchi/ts.mbt` checkout. Defaults to `tsBridge.generatorRoot`
+   * when that integration is enabled.
+   */
+  generatorRoot?: string;
+
+  /** Command used for `moon info` and `mbt2ts`. @default "moon" */
+  command?: string;
+
+  /**
+   * npm package name to write into the generated `package.json`.
+   * Defaults to the MoonBit package name derived by `mbt2ts`.
+   */
+  name?: string;
+
+  /**
+   * npm package version to write into the generated `package.json`.
+   * Defaults to the version emitted by `mbt2ts`.
+   */
+  version?: string;
+
+  /**
+   * Generate callable wrappers for eligible MoonBit methods and constructors.
+   * @default true
+   */
+  facade?: boolean;
+
+  /** Reject the package when public MoonBit members cannot be autolinked. */
+  strict?: boolean;
+
+  /** Optional import-rewrite JSON file for external MoonBit package imports. */
+  importRewrites?: string;
+
+  /** Optional path for copied autolink diagnostics. */
+  diagnostics?: string;
+
+  /**
+   * Bundle MoonBit's generated JS together with local TypeScript bridge
+   * modules into the published `index.js`. Disable only when the consumer
+   * will provide every runtime import itself.
+   * @default true
+   */
+  bundle?: boolean;
+}
+
 interface ResolvedMoonbitTsBridgeEntry {
   entry: string;
   moduleSpec: string;
   outDir: string;
+}
+
+interface MtscJsModule {
+  checkModuleGraph(graph: MtscModuleGraph): string;
+}
+
+interface MtscModuleSource {
+  path: string;
+  source: string;
+  allowJsx: boolean;
+}
+
+interface MtscModuleEdge {
+  importerPath: string;
+  moduleSpecifier: string;
+  targetPath: string;
+}
+
+interface MtscModuleGraph {
+  modules: MtscModuleSource[];
+  edges: MtscModuleEdge[];
+}
+
+interface TsBridgeModuleSource {
+  path: string;
+  source: string;
+  allowJsx: boolean;
+}
+
+interface TsBridgeModuleGraph {
+  modules: TsBridgeModuleSource[];
+  edges: MtscModuleEdge[];
 }
 
 export default function moonbitPlugin(
@@ -170,12 +278,19 @@ export default function moonbitPlugin(
   let logBuffer: string[] = [];
   let errorBuffer: string[] = [];
   let didGenerateTsBridges = false;
+  let didGenerateNpmPackage = false;
   let didNormalizeDtsAtStartup = false;
   let tsBridgeWatcherRegistered = false;
+  let npmPackageWatcherRegistered = false;
   let didWarnMissingNormalizedDtsGenerator = false;
   let didLogMissingNormalizedDtsBuildDir = false;
   let didLogMissingNormalizedDtsFiles = false;
   let didLogNormalizedDtsGeneratorInfo = false;
+  let mtscJsModule: MtscJsModule | null = null;
+  let mtscJsModuleRoot: string | null = null;
+  let mtscJsModuleInputStamp: number | null = null;
+  const tsBridgeTrackedFiles = new Set<string>();
+  const npmPackageWatchRoots = new Set<string>();
 
   const fileExt = target === "js" ? ".js" : ".wasm";
 
@@ -234,6 +349,153 @@ export default function moonbitPlugin(
     return resolveConfigPath(tsBridge.generatorRoot);
   }
 
+  function isTsBridgeSourcePath(filepath: string): boolean {
+    return /\.(?:[cm]?tsx?|d\.ts)$/.test(filepath);
+  }
+
+  function tsBridgeImportSpecifiers(source: string): string[] {
+    const specifiers = new Set<string>();
+    const patterns = [
+      /\bimport\s+(?:type\s+)?(?:[\w*$\s{},]+?\s+from\s+)?["']([^"']+)["']/g,
+      /\bexport\s+(?:type\s+)?(?:[\w*$\s{},]+?\s+from\s+)["']([^"']+)["']/g,
+      /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g,
+    ];
+    for (const pattern of patterns) {
+      for (const match of source.matchAll(pattern)) {
+        specifiers.add(match[1]);
+      }
+    }
+    return [...specifiers];
+  }
+
+  function isTsBridgeRelativeOrRootSpecifier(specifier: string): boolean {
+    return specifier.startsWith(".") || specifier.startsWith("/");
+  }
+
+  function cleanResolvedTsBridgePath(filepath: string): string {
+    return filepath.replace(/\?.*$/, "");
+  }
+
+  function isNodeModulePath(filepath: string): boolean {
+    return filepath.split(/[\\/]+/).includes("node_modules");
+  }
+
+  function trackTsBridgeFile(filepath: string) {
+    tsBridgeTrackedFiles.add(filepath);
+    server?.watcher.add(filepath);
+  }
+
+  function newestMtimeInDirectory(directory: string): number {
+    let newest = 0;
+    try {
+      newest = fs.statSync(directory).mtimeMs;
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const filepath = path.join(directory, entry.name);
+        if (entry.isDirectory()) {
+          newest = Math.max(newest, newestMtimeInDirectory(filepath));
+        } else if (entry.isFile()) {
+          try {
+            newest = Math.max(newest, fs.statSync(filepath).mtimeMs);
+          } catch {
+            // A watcher can observe a file while it is being removed. The
+            // directory mtime still invalidates the cached module next run.
+          }
+        }
+      }
+    } catch {
+      // A deleted generator directory is handled by the subsequent Moon build
+      // error, not by cache-stamp collection.
+    }
+    return newest;
+  }
+
+  function mtscInputStamp(generatorRoot: string): number {
+    return Math.max(
+      newestMtimeInDirectory(path.join(generatorRoot, "src")),
+      ...["moon.mod", "moon.mod.json"].map((name) => {
+        const filepath = path.join(generatorRoot, name);
+        return fs.existsSync(filepath) ? fs.statSync(filepath).mtimeMs : 0;
+      }),
+    );
+  }
+
+  function invalidateMtscJsModule() {
+    mtscJsModule = null;
+    mtscJsModuleRoot = null;
+    mtscJsModuleInputStamp = null;
+  }
+
+  function formatTsBridgeDiagnostics(
+    diagnostics: string,
+    modules: TsBridgeModuleSource[],
+  ): string {
+    const base = config?.root ?? root;
+    let formatted = diagnostics;
+    for (const module of modules) {
+      formatted = formatted.replaceAll(
+        module.path,
+        path.relative(base, module.path) || path.basename(module.path),
+      );
+    }
+    return formatted;
+  }
+
+  async function collectTsBridgeModuleSources(
+    entry: ResolvedMoonbitTsBridgeEntry,
+  ): Promise<TsBridgeModuleGraph> {
+    const resolver = config.createResolver();
+    const modules: TsBridgeModuleSource[] = [];
+    const edges: MtscModuleEdge[] = [];
+    const queued = [entry.entry];
+    const visited = new Set<string>();
+
+    while (queued.length > 0) {
+      const next = queued.shift();
+      if (!next) continue;
+      const filepath = path.resolve(next);
+      if (visited.has(filepath)) continue;
+      visited.add(filepath);
+      trackTsBridgeFile(filepath);
+
+      let source = "";
+      try {
+        source = fs.readFileSync(filepath, "utf-8");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(
+          `[moonbit] Could not read TS bridge module ${filepath}\n${message}`,
+        );
+      }
+      modules.push({
+        path: filepath,
+        source,
+        allowJsx: filepath.endsWith(".tsx"),
+      });
+
+      for (const specifier of tsBridgeImportSpecifiers(source)) {
+        const resolved = await resolver(specifier, filepath);
+        if (!resolved) {
+          if (isTsBridgeRelativeOrRootSpecifier(specifier)) {
+            throw new Error(
+              `[moonbit] Could not resolve local TS bridge import ${JSON.stringify(specifier)} from ${filepath}`,
+            );
+          }
+          continue;
+        }
+        const dependency = cleanResolvedTsBridgePath(resolved);
+        if (isTsBridgeSourcePath(dependency) && !isNodeModulePath(dependency)) {
+          edges.push({
+            importerPath: filepath,
+            moduleSpecifier: specifier,
+            targetPath: path.resolve(dependency),
+          });
+          queued.push(dependency);
+        }
+      }
+    }
+    return { modules, edges };
+  }
+
   function resolveNormalizedDtsGeneratorRoot(): string | null {
     const normalizedDts = options.normalizedDts;
     if (!normalizedDts) return null;
@@ -254,6 +516,321 @@ export default function moonbitPlugin(
     const tsBridge = options.tsBridge;
     if (tsBridge?.command) return tsBridge.command;
     return "moon";
+  }
+
+  function resolveNpmPackageGeneratorRoot(): string | null {
+    const npmPackage = options.npmPackage;
+    if (!npmPackage) return null;
+    if (npmPackage.generatorRoot) {
+      return resolveConfigPath(npmPackage.generatorRoot);
+    }
+    const tsBridge = options.tsBridge;
+    if (tsBridge?.generatorRoot) {
+      return resolveConfigPath(tsBridge.generatorRoot);
+    }
+    return null;
+  }
+
+  function resolveNpmPackageCommand(): string {
+    const npmPackage = options.npmPackage;
+    if (npmPackage?.command) return npmPackage.command;
+    const tsBridge = options.tsBridge;
+    if (tsBridge?.command) return tsBridge.command;
+    return "moon";
+  }
+
+  function trackNpmPackageWatchRoot(filepath: string) {
+    const absolute = path.resolve(filepath);
+    npmPackageWatchRoots.add(absolute);
+    server?.watcher.add(absolute);
+  }
+
+  function resolveNpmPackageMbtiPath(entry: string): string {
+    const configuredPath = resolveConfigPath(entry);
+    if (entry.endsWith("pkg.generated.mbti")) {
+      trackNpmPackageWatchRoot(path.dirname(configuredPath));
+      return configuredPath;
+    }
+    if (fs.existsSync(configuredPath)) {
+      const stat = fs.statSync(configuredPath);
+      if (stat.isFile()) return configuredPath;
+      if (stat.isDirectory()) {
+        trackNpmPackageWatchRoot(configuredPath);
+        return path.join(configuredPath, "pkg.generated.mbti");
+      }
+    }
+
+    const packageDir = resolveSourcePackageDir(
+      entry.startsWith(MBT_PREFIX) ? entry : `${MBT_PREFIX}${entry}`,
+    );
+    if (!packageDir) {
+      throw new Error(
+        `[moonbit] Could not resolve npmPackage.entry ${JSON.stringify(entry)} as a MoonBit package or pkg.generated.mbti path`,
+      );
+    }
+    trackNpmPackageWatchRoot(packageDir);
+    return path.join(packageDir, "pkg.generated.mbti");
+  }
+
+  function runMoonbitInfoForNpmPackage(command: string, reason: string) {
+    const cwd = projectInfo?.workspaceRoot ?? root;
+    log(`Generating MoonBit interfaces for npm package (${reason})`);
+    const result = spawnSync(command, ["info"], {
+      cwd,
+      encoding: "utf-8",
+    });
+    if (result.status === 0) return;
+    const details = [
+      result.stdout?.trim(),
+      result.stderr?.trim(),
+      result.error?.message,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    throw new Error(
+      `[moonbit] Could not generate MoonBit interfaces for npm packaging\n${details || `command exited with code ${result.status}`}`,
+    );
+  }
+
+  function copyNpmBundleFiles(from: string, to: string) {
+    for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+      const source = path.join(from, entry.name);
+      const target = path.join(to, entry.name);
+      if (entry.isDirectory()) {
+        fs.mkdirSync(target, { recursive: true });
+        copyNpmBundleFiles(source, target);
+      } else if (entry.isFile()) {
+        fs.copyFileSync(source, target);
+      }
+    }
+  }
+
+  function registerTsBridgeRuntimeModule(
+    runtimeModules: Map<string, string>,
+    packageDir: string,
+  ) {
+    const packageJsonPath = path.join(packageDir, "package.json");
+    const bridgeJsPath = path.join(packageDir, "bridge.js");
+    if (!fs.existsSync(packageJsonPath) || !fs.existsSync(bridgeJsPath)) {
+      return;
+    }
+    try {
+      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
+      if (
+        packageJson !== null &&
+        typeof packageJson === "object" &&
+        typeof packageJson.name === "string" &&
+        packageJson.name.length > 0
+      ) {
+        runtimeModules.set(packageJson.name, bridgeJsPath);
+      }
+    } catch {
+      // The bridge generator owns this manifest. Let its generated import
+      // produce Vite's normal diagnostic if it is malformed.
+    }
+  }
+
+  function tsBridgeRuntimeModules(): Map<string, string> {
+    const runtimeModules = new Map<string, string>();
+    for (const entry of resolveTsBridgeEntries()) {
+      registerTsBridgeRuntimeModule(runtimeModules, entry.outDir);
+    }
+
+    const visited = new Set<string>();
+    const visitSourceTree = (directory: string) => {
+      const absolute = path.resolve(directory);
+      if (visited.has(absolute)) return;
+      visited.add(absolute);
+      registerTsBridgeRuntimeModule(runtimeModules, absolute);
+      try {
+        for (const child of fs.readdirSync(absolute, { withFileTypes: true })) {
+          if (
+            !child.isDirectory() ||
+            child.name === "_build" ||
+            child.name === ".mooncakes" ||
+            child.name === "node_modules"
+          ) {
+            continue;
+          }
+          visitSourceTree(path.join(absolute, child.name));
+        }
+      } catch {
+        // A source directory may disappear during a watch rebuild. The next
+        // module resolution pass will rescan the current tree.
+      }
+    };
+    for (const member of projectInfo?.members ?? []) {
+      visitSourceTree(path.join(member.memberDir, member.source));
+    }
+    return runtimeModules;
+  }
+
+  function tsBridgeRuntimeResolver(): Plugin | null {
+    const runtimeModules = tsBridgeRuntimeModules();
+    if (runtimeModules.size === 0) return null;
+    return {
+      name: "vite-plugin-moonbit:ts-bridge-runtime",
+      enforce: "pre",
+      resolveId(id) {
+        return runtimeModules.get(id) ?? null;
+      },
+    };
+  }
+
+  async function bundleNpmPackage(
+    outDir: string,
+    entry: string,
+  ): Promise<void> {
+    const bundleDir = path.join(outDir, ".tsmbt-vite-bundle");
+    fs.rmSync(bundleDir, { recursive: true, force: true });
+    try {
+      const { build } = await import("vite");
+      const runtimeResolver = tsBridgeRuntimeResolver();
+      await build({
+        configFile: false,
+        root: config.root,
+        logLevel: "error",
+        plugins: runtimeResolver ? [runtimeResolver] : [],
+        resolve: {
+          alias: config.resolve.alias,
+        },
+        build: {
+          lib: {
+            entry,
+            formats: ["es"],
+            fileName: "index",
+          },
+          outDir: bundleDir,
+          emptyOutDir: true,
+          sourcemap: true,
+          rollupOptions: {
+            output: {
+              entryFileNames: "index.js",
+            },
+          },
+        },
+      });
+      if (!fs.existsSync(path.join(bundleDir, "index.js"))) {
+        throw new Error("Vite did not emit index.js");
+      }
+      copyNpmBundleFiles(bundleDir, outDir);
+    } finally {
+      // This directory is reserved for this generator and always created
+      // inside the requested output directory immediately above.
+      fs.rmSync(bundleDir, { recursive: true, force: true });
+    }
+  }
+
+  function applyNpmPackageMetadata(
+    outDir: string,
+    npmPackage: MoonbitNpmPackageOptions,
+  ) {
+    if (npmPackage.name === undefined && npmPackage.version === undefined) {
+      return;
+    }
+    const packageJsonPath = path.join(outDir, "package.json");
+    let generated: unknown;
+    try {
+      generated = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
+    } catch (error) {
+      throw new Error(
+        `[moonbit] Could not read generated npm package metadata at ${packageJsonPath}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (generated === null || typeof generated !== "object" || Array.isArray(generated)) {
+      throw new Error(
+        `[moonbit] Generated npm package metadata at ${packageJsonPath} must be a JSON object`,
+      );
+    }
+    const metadata = generated as Record<string, unknown>;
+    for (const [field, value] of [
+      ["name", npmPackage.name],
+      ["version", npmPackage.version],
+    ] as const) {
+      if (value !== undefined) {
+        if (value.trim() === "") {
+          throw new Error(`[moonbit] npmPackage.${field} must not be empty`);
+        }
+        metadata[field] = value;
+      }
+    }
+    fs.writeFileSync(packageJsonPath, `${JSON.stringify(metadata, null, 2)}\n`);
+  }
+
+  async function runNpmPackageGeneration(reason: string): Promise<boolean> {
+    const npmPackage = options.npmPackage;
+    if (!npmPackage) return false;
+    const generatorRoot = resolveNpmPackageGeneratorRoot();
+    if (!generatorRoot) {
+      throw new Error(
+        "[moonbit] npmPackage is enabled but no generatorRoot is configured. Set npmPackage.generatorRoot or reuse tsBridge.generatorRoot.",
+      );
+    }
+    const command = resolveNpmPackageCommand();
+    runMoonbitInfoForNpmPackage(command, reason);
+    const mbtiPath = resolveNpmPackageMbtiPath(npmPackage.entry);
+    if (!fs.existsSync(mbtiPath)) {
+      throw new Error(
+        `[moonbit] npmPackage.entry did not produce ${mbtiPath}. Ensure moon info can generate pkg.generated.mbti for the selected package.`,
+      );
+    }
+    const outDir = resolveConfigPath(npmPackage.outDir);
+    const args = [
+      "run",
+      "src/cmd/mbt2ts",
+      "--",
+      "--input",
+      mbtiPath,
+      "--out",
+      outDir,
+    ];
+    if (npmPackage.facade === false) args.push("--no-facade");
+    if (npmPackage.strict) args.push("--strict");
+    if (npmPackage.importRewrites) {
+      args.push("--import-rewrites", resolveConfigPath(npmPackage.importRewrites));
+    }
+    if (npmPackage.diagnostics) {
+      args.push("--diagnostics", resolveConfigPath(npmPackage.diagnostics));
+    }
+    log(
+      `Generating npm package (${reason}): ${path.relative(config?.root ?? root, outDir)} <- ${npmPackage.entry}`,
+    );
+    const result = spawnSync(command, args, {
+      cwd: generatorRoot,
+      encoding: "utf-8",
+    });
+    if (result.status !== 0) {
+      const details = [result.stdout?.trim(), result.stderr?.trim()]
+        .filter(Boolean)
+        .join("\n");
+      throw new Error(
+        `[moonbit] npm package generation failed for ${npmPackage.entry}\n${details || `command exited with code ${result.status}`}`,
+      );
+    }
+    if (showLogs && result.stdout?.trim()) {
+      console.log(result.stdout.trim());
+    }
+    applyNpmPackageMetadata(outDir, npmPackage);
+    if (npmPackage.bundle !== false) {
+      log(`Bundling npm package runtime (${reason}): ${path.relative(config?.root ?? root, outDir)}`);
+      await bundleNpmPackage(outDir, path.join(outDir, "index.js"));
+    }
+    return true;
+  }
+
+  async function ensureNpmPackageGeneration(reason: string) {
+    if (!options.npmPackage) return;
+    await runNpmPackageGeneration(reason);
+    didGenerateNpmPackage = true;
+  }
+
+  function isNpmPackageSourcePath(filepath: string): boolean {
+    const name = path.basename(filepath);
+    return filepath.endsWith(".mbt") ||
+      name === "moon.pkg" ||
+      name === "moon.pkg.json" ||
+      name === "moon.mod" ||
+      name === "moon.mod.json";
   }
 
   function isMoonbitGeneratedDeclarationFile(filepath: string): boolean {
@@ -702,7 +1279,78 @@ export default function moonbitPlugin(
     }
   }
 
-  function runTsBridgeGeneration(reason: string) {
+  async function loadMtscJsModule(
+    generatorRoot: string,
+    command: string,
+  ): Promise<MtscJsModule> {
+    const inputStamp = mtscInputStamp(generatorRoot);
+    if (
+      mtscJsModule &&
+      mtscJsModuleRoot === generatorRoot &&
+      mtscJsModuleInputStamp === inputStamp
+    ) {
+      return mtscJsModule;
+    }
+
+    log("Building the mtsc MoonBit JS module");
+    const buildResult = spawnSync(
+      command,
+      ["build", "--target", "js", "--release", "src/mtsc"],
+      {
+        cwd: generatorRoot,
+        encoding: "utf-8",
+      },
+    );
+    if (buildResult.status !== 0) {
+      const details = [
+        buildResult.stdout?.trim(),
+        buildResult.stderr?.trim(),
+        buildResult.error?.message,
+      ]
+        .filter(Boolean)
+        .join("\n");
+      throw new Error(
+        `[moonbit] Could not build the mtsc MoonBit JS module\n${details || `command exited with code ${buildResult.status}`}`,
+      );
+    }
+
+    const modulePath = path.join(
+      generatorRoot,
+      "_build",
+      "js",
+      "release",
+      "build",
+      "mtsc",
+      "mtsc.js",
+    );
+    if (!fs.existsSync(modulePath)) {
+      throw new Error(
+        `[moonbit] mtsc MoonBit JS module was not emitted at ${modulePath}`,
+      );
+    }
+
+    const artifactStamp = fs.statSync(modulePath).mtimeMs;
+    const imported: unknown = await import(
+      `${pathToFileURL(modulePath).href}?v=${artifactStamp}`,
+    );
+    const checkModuleGraph = (
+      imported as { checkModuleGraph?: unknown }
+    ).checkModuleGraph;
+    if (typeof checkModuleGraph !== "function") {
+      throw new Error(
+        `[moonbit] mtsc MoonBit JS module does not export checkModuleGraph (${modulePath})`,
+      );
+    }
+
+    mtscJsModule = {
+      checkModuleGraph: checkModuleGraph as MtscJsModule["checkModuleGraph"],
+    };
+    mtscJsModuleRoot = generatorRoot;
+    mtscJsModuleInputStamp = inputStamp;
+    return mtscJsModule;
+  }
+
+  async function runTsBridgeGeneration(reason: string) {
     const tsBridge = options.tsBridge;
     if (!tsBridge) return;
     const generatorRoot = resolveTsBridgeGeneratorRoot();
@@ -711,12 +1359,35 @@ export default function moonbitPlugin(
     if (entries.length === 0) return;
 
     const command = tsBridge.command ?? "moon";
+    const checker = await loadMtscJsModule(generatorRoot, command);
     for (const entry of entries) {
+      log(
+        `Type-checking TS bridge entry (${reason}): ${path.relative(config?.root ?? root, entry.entry)}`,
+      );
+      const graph = await collectTsBridgeModuleSources(entry);
+      const diagnostics = checker.checkModuleGraph({
+        modules: graph.modules.map(({ path: filepath, source, allowJsx }) => ({
+          path: filepath,
+          source,
+          allowJsx,
+        })),
+        edges: graph.edges,
+      });
+      if (diagnostics) {
+        const formattedDiagnostics = formatTsBridgeDiagnostics(
+          diagnostics,
+          graph.modules,
+        );
+        throw new Error(
+          `[moonbit] Type checking TS bridge entry failed for ${entry.entry}\n${formattedDiagnostics}`,
+        );
+      }
+
       const args = [
         "run",
-        "src",
+        "src/cmd/ts2mbt",
         "--",
-        "emit-moonbit-bridge-package",
+        tsBridge.runtimeValidation ? "package-validated" : "package",
         entry.entry,
         entry.moduleSpec,
         entry.outDir,
@@ -727,7 +1398,6 @@ export default function moonbitPlugin(
       const result = spawnSync(command, args, {
         cwd: generatorRoot,
         encoding: "utf-8",
-        shell: true,
       });
       if (result.status !== 0) {
         const stdout = result.stdout?.trim();
@@ -744,9 +1414,9 @@ export default function moonbitPlugin(
     didGenerateTsBridges = true;
   }
 
-  function ensureTsBridgeGeneration(reason: string) {
+  async function ensureTsBridgeGeneration(reason: string) {
     if (!options.tsBridge) return;
-    runTsBridgeGeneration(reason);
+    await runTsBridgeGeneration(reason);
   }
 
   function runNormalizedDtsGeneration(reason: string): boolean {
@@ -799,16 +1469,15 @@ export default function moonbitPlugin(
     for (const filepath of declarationFiles) {
       const args = [
         "run",
-        "src",
+        "src/cmd/mbt2ts",
         "--",
-        "normalize-moonbit-dts",
+        "normalize",
         filepath,
         filepath,
       ];
       const result = spawnSync(command, args, {
         cwd: generatorRoot,
         encoding: "utf-8",
-        shell: true,
       });
       if (result.status !== 0) {
         const stdout = result.stdout?.trim();
@@ -832,21 +1501,73 @@ export default function moonbitPlugin(
 
   function registerTsBridgeWatcher(devServer: ViteDevServer) {
     if (!options.tsBridge || tsBridgeWatcherRegistered) return;
-    const tracked = new Set(resolveTsBridgeEntries().map((entry) => entry.entry));
-    for (const filepath of tracked) {
+    for (const filepath of tsBridgeTrackedFiles) {
       devServer.watcher.add(filepath);
     }
-    devServer.watcher.on("change", (changedPath) => {
+    const generatorRoot = resolveTsBridgeGeneratorRoot();
+    const generatorSourceDir = generatorRoot
+      ? path.join(generatorRoot, "src")
+      : null;
+    const generatorManifestPaths = generatorRoot
+      ? ["moon.mod", "moon.mod.json"].map((name) => path.join(generatorRoot, name))
+      : [];
+    if (generatorSourceDir) {
+      devServer.watcher.add(generatorSourceDir);
+    }
+    if (generatorManifestPaths.length > 0) {
+      devServer.watcher.add(generatorManifestPaths);
+    }
+    devServer.watcher.on("all", (event, changedPath) => {
+      if (event !== "add" && event !== "change" && event !== "unlink") return;
       const abs = path.resolve(changedPath);
-      if (!tracked.has(abs)) return;
-      try {
-        ensureTsBridgeGeneration(`change:${path.relative(config.root, abs)}`);
-      } catch (error) {
+      const isMtscInput =
+        (generatorSourceDir !== null &&
+          (abs === generatorSourceDir ||
+            abs.startsWith(generatorSourceDir + path.sep))) ||
+        generatorManifestPaths.includes(abs);
+      if (isMtscInput) {
+        invalidateMtscJsModule();
+        void ensureTsBridgeGeneration(
+          `mtsc-input-${event}:${path.relative(generatorRoot!, abs)}`,
+        ).catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          log(message, "error");
+        });
+        return;
+      }
+      if (!tsBridgeTrackedFiles.has(abs)) return;
+      void ensureTsBridgeGeneration(
+        `change:${path.relative(config.root, abs)}`,
+      ).catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
         log(message, "error");
-      }
+      });
     });
     tsBridgeWatcherRegistered = true;
+  }
+
+  function registerNpmPackageWatcher(devServer: ViteDevServer) {
+    if (!options.npmPackage || npmPackageWatcherRegistered) return;
+    for (const rootPath of npmPackageWatchRoots) {
+      devServer.watcher.add(rootPath);
+    }
+    devServer.watcher.on("all", (event, changedPath) => {
+      if (event !== "add" && event !== "change" && event !== "unlink") return;
+      const absolute = path.resolve(changedPath);
+      const belongsToNpmPackage = [...npmPackageWatchRoots].some(
+        (rootPath) =>
+          absolute === rootPath || absolute.startsWith(rootPath + path.sep),
+      );
+      if (!belongsToNpmPackage || !isNpmPackageSourcePath(absolute)) return;
+      didGenerateNpmPackage = false;
+      void Promise.resolve()
+        .then(() => ensureNpmPackageGeneration(`change:${path.relative(config.root, absolute)}`))
+        .catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          log(message, "error");
+        });
+    });
+    npmPackageWatcherRegistered = true;
   }
 
   function startWatchProcess() {
@@ -862,7 +1583,6 @@ export default function moonbitPlugin(
     moonProcess = spawn("moon", args, {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
-      shell: true,
       env: { ...process.env, FORCE_COLOR: "1" }, // Force ANSI colors
     });
 
@@ -1084,7 +1804,7 @@ export default function moonbitPlugin(
       };
     },
 
-    configResolved(resolvedConfig) {
+    async configResolved(resolvedConfig) {
       config = resolvedConfig;
       projectInfo = readProjectInfo(root);
 
@@ -1115,13 +1835,17 @@ export default function moonbitPlugin(
         );
       }
 
-      ensureTsBridgeGeneration("configResolved");
+      await ensureTsBridgeGeneration("configResolved");
+      if (config.command !== "build") {
+        await ensureNpmPackageGeneration("configResolved");
+      }
       didNormalizeDtsAtStartup = ensureNormalizedDtsGeneration("configResolved");
     },
 
     configureServer(devServer) {
       server = devServer;
       registerTsBridgeWatcher(devServer);
+      registerNpmPackageWatcher(devServer);
 
       const shouldWatch =
         watchOption !== undefined ? watchOption : config.command === "serve";
@@ -1139,6 +1863,8 @@ export default function moonbitPlugin(
     },
 
     resolveId(id) {
+      const bridgeRuntime = tsBridgeRuntimeModules().get(id);
+      if (bridgeRuntime) return bridgeRuntime;
       if (!id.startsWith(MBT_PREFIX)) return null;
 
       // Pass the query through (e.g. `?worker`, `?url`, `?raw`) — the caller
@@ -1247,12 +1973,15 @@ export { init };
       return null;
     },
 
-    buildStart() {
+    async buildStart() {
       if (!projectInfo) {
         projectInfo = readProjectInfo(root);
       }
       if (!didGenerateTsBridges) {
-        ensureTsBridgeGeneration("buildStart");
+        await ensureTsBridgeGeneration("buildStart");
+      }
+      if (config.command !== "build" && !didGenerateNpmPackage) {
+        await ensureNpmPackageGeneration("buildStart");
       }
       if (!didNormalizeDtsAtStartup) {
         didNormalizeDtsAtStartup = ensureNormalizedDtsGeneration("buildStart");
@@ -1262,6 +1991,16 @@ export { init };
     buildEnd() {
       stopWatchProcess();
       stopBuildWatcher();
+    },
+
+    async closeBundle() {
+      // Vite clears its output directory after `configResolved` / `buildStart`.
+      // Emit here so `npmPackage.outDir: "dist/npm"` is a valid, convenient
+      // publication layout rather than being removed by Vite's own build.
+      if (config.command === "build" && options.npmPackage) {
+        didGenerateNpmPackage = false;
+        await ensureNpmPackageGeneration("closeBundle");
+      }
     },
   };
 }

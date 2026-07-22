@@ -1,0 +1,7 @@
+{
+  "name": "@tsmbt-bridge/math_bridge",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "bridge.js",
+  "private": true
+}
