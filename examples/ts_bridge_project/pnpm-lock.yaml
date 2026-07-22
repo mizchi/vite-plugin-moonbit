@@ -8,6 +8,9 @@ importers:
 
   .:
     devDependencies:
+      '@tsmbt-bridge/math_bridge':
+        specifier: file:./src/gen/math_bridge
+        version: file:src/gen/math_bridge
       vite:
         specifier: 8.0.0-beta.3
         version: 8.0.0-beta.3
@@ -119,6 +122,9 @@ packages:
 
   '@rolldown/pluginutils@1.0.0-beta.55':
     resolution: {integrity: sha512-vajw/B3qoi7aYnnD4BQ4VoCcXQWnF0roSwE2iynbNxgW4l9mFwtLmLmUhpDdcTBfKyZm1p/T0D13qG94XBLohA==}
+
+  '@tsmbt-bridge/math_bridge@file:src/gen/math_bridge':
+    resolution: {directory: src/gen/math_bridge, type: directory}
 
   '@tybys/wasm-util@0.10.1':
     resolution: {integrity: sha512-9tTaPJLSiejZKx+Bmog4uSubteqTvFrVrURwkmHixBo0G4seD0zUxp98E1DzUBJxLQ3NPwXrGKDiVjwx/DpPsg==}
@@ -358,6 +364,8 @@ snapshots:
     optional: true
 
   '@rolldown/pluginutils@1.0.0-beta.55': {}
+
+  '@tsmbt-bridge/math_bridge@file:src/gen/math_bridge': {}
 
   '@tybys/wasm-util@0.10.1':
     dependencies:

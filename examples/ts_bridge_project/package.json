@@ -6,6 +6,7 @@
     "build": "vite build"
   },
   "devDependencies": {
+    "@tsmbt-bridge/math_bridge": "file:./src/gen/math_bridge",
     "vite": "8.0.0-beta.3",
     "vite-plugin-moonbit": "link:../.."
   }
