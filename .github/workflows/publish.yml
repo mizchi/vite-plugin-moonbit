@@ -1,22 +1,33 @@
 name: publish
 
+# Push a v* tag to publish. The tag must be v<package.json version>.
+#
+#   npm version <version> --no-git-tag-version
+#   GITHUB_TOKEN=$(gh auth token) npx git-cliff@2.14.2 --unreleased --tag v<version> --prepend CHANGELOG.md
+#   git commit -am "chore: release <version>"
+#   git tag v<version> && git push origin main v<version>
+#
+# npm trusts this workflow by filename (OIDC trusted publishing, no NPM_TOKEN):
+#   npm trust github vite-plugin-moonbit --repo mizchi/vite-plugin-moonbit --file publish.yml --allow-publish
 on:
-  release:
-    types: [published]
-  workflow_dispatch:
+  push:
+    tags: ["v*"]
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # gh release create
+      id-token: write # npm trusted publishing (OIDC)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: pnpm
@@ -33,8 +44,45 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Tag matches package.json version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "package.json is $version, tag is $GITHUB_REF_NAME"
+            exit 1
+          fi
+
       - name: Build
         run: pnpm run build
 
-      - name: Publish to npm (OIDC Trusted Publishing)
-        run: npm publish --access public --provenance
+      - name: Release notes from the changelog
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          awk -v v="$version" '
+            BEGIN { plain = "## " v; linked = "## [" v "]" }
+            $0 == plain || index($0, plain " ") == 1 || index($0, linked) == 1 { on = 1; next }
+            on && /^## / { exit }
+            on
+          ' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+
+      # Trusted publishing needs npm >= 11.5.1.
+      - run: npm install --global npm@11
+
+      - name: Publish to npm (OIDC trusted publishing)
+        run: |
+          case "${GITHUB_REF_NAME#v}" in
+            *-*) npm publish --access public --tag next ;;
+            *) npm publish --access public ;;
+          esac
+
+      - name: GitHub Release
+        run: |
+          prerelease=""
+          case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
+          if grep -q '[^[:space:]]' "$RUNNER_TEMP/notes.md"; then
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md" $prerelease
+          else
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes $prerelease
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
